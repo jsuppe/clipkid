@@ -132,39 +132,18 @@ class _TrimScreenState extends State<TrimScreen> {
     setState(() {
       _markingStartMs = currentMs;
     });
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('▶ Start marked at ${_formatTime(currentMs)} — now mark the end'),
-        duration: const Duration(seconds: 2),
-        backgroundColor: Colors.green[700],
-      ),
-    );
   }
 
   void _markEnd() {
     if (_markingStartMs == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('⚠️ Mark the start first!'),
-          duration: const Duration(seconds: 1),
-          backgroundColor: Colors.orange[700],
-        ),
-      );
-      return;
+      return; // Can't mark end without start
     }
 
     final currentMs = _controller.value.position.inMilliseconds;
     final startMs = _markingStartMs!;
     
     if (currentMs <= startMs + 200) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('⚠️ End must be after start'),
-          duration: const Duration(seconds: 1),
-          backgroundColor: Colors.orange[700],
-        ),
-      );
-      return;
+      return; // End must be after start
     }
 
     // Create new segment
@@ -178,26 +157,11 @@ class _TrimScreenState extends State<TrimScreen> {
       _segments.sort((a, b) => a.inPointMs.compareTo(b.inPointMs));
       _markingStartMs = null;
     });
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('✂️ Segment added: ${_formatTime(startMs)} → ${_formatTime(currentMs)}'),
-        duration: const Duration(seconds: 2),
-        backgroundColor: Colors.blue[700],
-      ),
-    );
   }
 
   void _deleteSegment(int index) {
     if (_segments.length <= 1) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('⚠️ Need at least one segment'),
-          duration: const Duration(seconds: 1),
-          backgroundColor: Colors.orange[700],
-        ),
-      );
-      return;
+      return; // Need at least one segment
     }
 
     setState(() {

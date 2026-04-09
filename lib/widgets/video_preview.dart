@@ -160,6 +160,16 @@ class VideoPreviewState extends State<VideoPreview> {
   }
 
   bool get isPlaying => _isPlaying;
+
+  /// Pause playback
+  Future<void> pause() async {
+    if (_controller != null && _isPlaying) {
+      await _controller!.pause();
+      setState(() {
+        _isPlaying = false;
+      });
+    }
+  }
   
   /// Whether the current clip is playing the stabilized version
   bool get isPlayingStabilized {
@@ -169,6 +179,25 @@ class VideoPreviewState extends State<VideoPreview> {
     }
     final clip = widget.choreography.clips[_currentClipIndex];
     return clip.effects.stabilize && clip.processedPath != null;
+  }
+
+  /// Whether the current clip is playing the styled version
+  bool get isPlayingStyled {
+    if (_currentClipIndex < 0 || 
+        _currentClipIndex >= widget.choreography.clips.length) {
+      return false;
+    }
+    final clip = widget.choreography.clips[_currentClipIndex];
+    return clip.effects.styled && clip.processedPath != null;
+  }
+
+  /// Get the style name if styled
+  String? get currentStyleName {
+    if (_currentClipIndex < 0 || 
+        _currentClipIndex >= widget.choreography.clips.length) {
+      return null;
+    }
+    return widget.choreography.clips[_currentClipIndex].effects.styleName;
   }
 
   @override
@@ -195,34 +224,65 @@ class VideoPreviewState extends State<VideoPreview> {
               child: VideoPlayer(_controller!),
             ),
           ),
-          // Stabilized indicator
-          if (isPlayingStabilized)
-            Positioned(
-              top: 8,
-              left: 8,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: Colors.green.withValues(alpha: 0.8),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.auto_fix_high, color: Colors.white, size: 14),
-                    SizedBox(width: 4),
-                    Text(
-                      'Stabilized',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                      ),
+          // Effect badges
+          Positioned(
+            top: 8,
+            left: 8,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Styled indicator
+                if (isPlayingStyled)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    margin: const EdgeInsets.only(bottom: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.purple.withValues(alpha: 0.8),
+                      borderRadius: BorderRadius.circular(4),
                     ),
-                  ],
-                ),
-              ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.palette, color: Colors.white, size: 14),
+                        const SizedBox(width: 4),
+                        Text(
+                          currentStyleName ?? 'Styled',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                // Stabilized indicator
+                if (isPlayingStabilized)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.green.withValues(alpha: 0.8),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.auto_fix_high, color: Colors.white, size: 14),
+                        SizedBox(width: 4),
+                        Text(
+                          'Stabilized',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
             ),
+          ),
         ],
       ),
     );

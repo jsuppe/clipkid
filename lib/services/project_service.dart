@@ -1,5 +1,5 @@
 import 'dart:io';
-import 'package:file_picker/file_picker.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 import 'package:video_player/video_player.dart';
@@ -8,21 +8,34 @@ import '../models/choreography.dart';
 /// Service for managing projects and video files
 class ProjectService {
   static const _uuid = Uuid();
+  static final _picker = ImagePicker();
 
   /// Pick multiple video files from device gallery
-  /// Uses file_picker for Shorebird compatibility
+  /// Uses image_picker (native Android photo picker)
   static Future<List<File>?> pickVideos() async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.video,
-      allowMultiple: true,
+    // Use pickVideo instead of pickMultipleMedia for better compatibility
+    final result = await _picker.pickVideo(source: ImageSource.gallery);
+    
+    if (result == null) return null;
+    
+    return [File(result.path)];
+  }
+
+  /// Capture a video using the device camera
+  /// Returns the recorded video file, or null if cancelled
+  static Future<File?> captureVideo({
+    Duration? maxDuration,
+    CameraDevice preferredCamera = CameraDevice.rear,
+  }) async {
+    final result = await _picker.pickVideo(
+      source: ImageSource.camera,
+      maxDuration: maxDuration ?? const Duration(minutes: 5),
+      preferredCameraDevice: preferredCamera,
     );
-
-    if (result == null || result.files.isEmpty) return null;
-
-    return result.files
-        .where((f) => f.path != null)
-        .map((f) => File(f.path!))
-        .toList();
+    
+    if (result == null) return null;
+    
+    return File(result.path);
   }
 
   /// Get video duration using VideoPlayerController

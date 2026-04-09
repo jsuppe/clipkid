@@ -28,11 +28,39 @@ class _TimelineViewState extends State<TimelineView> {
   int? _draggedIndex;
   int? _hoverTargetIndex;
 
+  // Fixed color palette for clips - visually distinct colors
+  static const List<Color> _clipColors = [
+    Color(0xFF4CAF50), // Green
+    Color(0xFF2196F3), // Blue
+    Color(0xFFFF9800), // Orange
+    Color(0xFF9C27B0), // Purple
+    Color(0xFFE91E63), // Pink
+    Color(0xFF00BCD4), // Cyan
+    Color(0xFFFFEB3B), // Yellow
+    Color(0xFF795548), // Brown
+    Color(0xFF607D8B), // Blue Grey
+    Color(0xFFFF5722), // Deep Orange
+  ];
+
+  Color _getClipColor(int index) {
+    return _clipColors[index % _clipColors.length];
+  }
+
+  String _formatTime(int ms) {
+    final totalSeconds = ms ~/ 1000;
+    final minutes = totalSeconds ~/ 60;
+    final seconds = totalSeconds % 60;
+    if (minutes > 0) {
+      return '${minutes}m${seconds}s';
+    }
+    return '${seconds}s';
+  }
+
   @override
   Widget build(BuildContext context) {
     if (widget.choreography.clips.isEmpty) {
       return Container(
-        height: 80,
+        height: 100,
         decoration: BoxDecoration(
           color: Colors.grey[900],
           borderRadius: BorderRadius.circular(8),
@@ -51,7 +79,7 @@ class _TimelineViewState extends State<TimelineView> {
     return ClipRRect(
       borderRadius: BorderRadius.circular(8),
       child: Container(
-        height: 80,
+        height: 100,
         decoration: BoxDecoration(
           color: Colors.grey[900],
           borderRadius: BorderRadius.circular(8),
@@ -73,11 +101,25 @@ class _TimelineViewState extends State<TimelineView> {
               },
               child: Stack(
                 children: [
-                  // Clips row with drop indicators
-                  Row(
-                    children: _buildClipsRow(width, totalDuration),
+                  // Time ticks at bottom
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    height: 20,
+                    child: _buildTimeTicks(width, totalDuration),
                   ),
-                  // Playhead
+                  // Clips area (above time ticks)
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    top: 0,
+                    bottom: 20,
+                    child: Row(
+                      children: _buildClipsRow(width, totalDuration),
+                    ),
+                  ),
+                  // Playhead (full height)
                   Positioned(
                     left: playheadPosition.clamp(0, width - 2),
                     top: 0,
@@ -98,98 +140,68 @@ class _TimelineViewState extends State<TimelineView> {
     );
   }
 
+  Widget _buildTimeTicks(double width, int totalDuration) {
+    if (totalDuration <= 0) return const SizedBox.shrink();
+
+    // Determine tick interval based on duration
+    // For short videos: every 5 seconds
+    // For medium: every 10 seconds
+    // For long: every 30 seconds
+    int tickIntervalMs;
+    if (totalDuration < 30000) {
+      tickIntervalMs = 5000;
+    } else if (totalDuration < 120000) {
+      tickIntervalMs = 10000;
+    } else if (totalDuration < 300000) {
+      tickIntervalMs = 30000;
+    } else {
+      tickIntervalMs = 60000;
+    }
+
+    final ticks = <Widget>[];
+    for (int ms = 0; ms <= totalDuration; ms += tickIntervalMs) {
+      final x = (ms / totalDuration) * width;
+      ticks.add(
+        Positioned(
+          left: x - 1,
+          top: 0,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 1,
+                height: 6,
+                color: Colors.grey[600],
+              ),
+              Text(
+                _formatTime(ms),
+                style: TextStyle(
+                  color: Colors.grey[500],
+                  fontSize: 8,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Stack(children: ticks);
+  }
+
   List<Widget> _buildClipsRow(double width, int totalDuration) {
     final clips = widget.choreography.clips;
-    // Reserve space for drop indicators - edge zones are larger for easier touch targeting
-    final dropZoneWidth = 12.0;
-    final edgeDropZoneWidth = 32.0; // Larger for first/last positions
-    final numMiddleDropZones = clips.length > 1 ? clips.length - 1 : 0;
-    final totalDropSpace = (edgeDropZoneWidth * 2) + (numMiddleDropZones * dropZoneWidth);
-    final totalMargins = clips.length * 8.0;
-    final availableWidth = width - totalMargins - totalDropSpace;
-    
     final widgets = <Widget>[];
-
-    // Drop zone at beginning (insert at index 0) - larger for easier targeting
-    widgets.add(_buildDropIndicator(0, edgeDropZoneWidth, isEdge: true));
 
     for (int index = 0; index < clips.length; index++) {
       final clip = clips[index];
-      final clipWidth = (clip.durationMs / totalDuration) * availableWidth;
+      // Width proportional to clip duration
+      final clipWidth = (clip.durationMs / totalDuration) * width;
       
       widgets.add(_buildDraggableClip(index, clip, clipWidth.clamp(40, double.infinity)));
-      
-      // Drop zone after this clip (insert at index + 1)
-      // Last one is edge (larger), others are normal
-      final isLastZone = index == clips.length - 1;
-      widgets.add(_buildDropIndicator(
-        index + 1, 
-        isLastZone ? edgeDropZoneWidth : dropZoneWidth,
-        isEdge: isLastZone,
-      ));
     }
 
     return widgets;
-  }
-
-  Widget _buildDropIndicator(int targetIndex, double baseWidth, {bool isEdge = false}) {
-    final isHovering = _hoverTargetIndex == targetIndex;
-    final isDragging = _draggedIndex != null;
-    
-    return DragTarget<int>(
-      onWillAcceptWithDetails: (details) {
-        final fromIndex = details.data;
-        // Can't drop at same position or adjacent (no change)
-        if (fromIndex == targetIndex || fromIndex == targetIndex - 1) {
-          return false;
-        }
-        setState(() => _hoverTargetIndex = targetIndex);
-        return true;
-      },
-      onLeave: (_) {
-        setState(() => _hoverTargetIndex = null);
-      },
-      onAcceptWithDetails: (details) {
-        final fromIndex = details.data;
-        var toIndex = targetIndex;
-        
-        // Adjust for the removal of the dragged item
-        if (fromIndex < toIndex) {
-          toIndex--;
-        }
-        
-        setState(() => _hoverTargetIndex = null);
-        widget.onReorder?.call(fromIndex, toIndex);
-      },
-      builder: (context, candidateData, rejectedData) {
-        // Edge zones show arrows when dragging to hint at drop targets
-        Widget? hintWidget;
-        if (isHovering) {
-          hintWidget = const Icon(Icons.add, color: Colors.white, size: 16);
-        } else if (isDragging && isEdge) {
-          // Show directional hint on edge zones
-          hintWidget = Icon(
-            targetIndex == 0 ? Icons.first_page : Icons.last_page,
-            color: Colors.white54,
-            size: 16,
-          );
-        }
-        
-        return AnimatedContainer(
-          duration: const Duration(milliseconds: 150),
-          width: isHovering ? 32 : baseWidth,
-          height: 72,
-          margin: const EdgeInsets.symmetric(vertical: 4),
-          decoration: BoxDecoration(
-            color: isHovering 
-                ? Colors.blue 
-                : (isDragging ? Colors.blue.withValues(alpha: isEdge ? 0.5 : 0.3) : Colors.transparent),
-            borderRadius: BorderRadius.circular(4),
-          ),
-          child: hintWidget != null ? Center(child: hintWidget) : null,
-        );
-      },
-    );
   }
 
   Widget _buildDraggableClip(int index, Clip clip, double clipWidth) {
@@ -211,10 +223,10 @@ class _TimelineViewState extends State<TimelineView> {
       feedback: Material(
         color: Colors.transparent,
         child: Container(
-          width: clipWidth,
-          height: 72,
+          width: clipWidth.clamp(60, 150),
+          height: 60,
           decoration: BoxDecoration(
-            color: _clipColor(clip.id).withValues(alpha: 0.9),
+            color: _getClipColor(index).withValues(alpha: 0.9),
             borderRadius: BorderRadius.circular(4),
             boxShadow: const [
               BoxShadow(color: Colors.black54, blurRadius: 8, offset: Offset(0, 4)),
@@ -222,7 +234,7 @@ class _TimelineViewState extends State<TimelineView> {
           ),
           child: Center(
             child: Text(
-              clip.name ?? 'Clip',
+              clip.name ?? 'Clip ${index + 1}',
               style: const TextStyle(color: Colors.white, fontSize: 10),
               overflow: TextOverflow.ellipsis,
             ),
@@ -231,55 +243,149 @@ class _TimelineViewState extends State<TimelineView> {
       ),
       childWhenDragging: Opacity(
         opacity: 0.3,
-        child: _buildClipContainer(clip, clipWidth, isSelected, showIcons: false),
+        child: _buildClipContainer(index, clip, clipWidth, isSelected),
       ),
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: () => widget.onClipTap?.call(index),
-        child: _buildClipContainer(clip, clipWidth, isSelected, showIcons: true),
+      child: DragTarget<int>(
+        onWillAcceptWithDetails: (details) {
+          final fromIndex = details.data;
+          if (fromIndex == index) return false;
+          setState(() => _hoverTargetIndex = index);
+          return true;
+        },
+        onLeave: (_) => setState(() => _hoverTargetIndex = null),
+        onAcceptWithDetails: (details) {
+          final fromIndex = details.data;
+          setState(() => _hoverTargetIndex = null);
+          widget.onReorder?.call(fromIndex, index);
+        },
+        builder: (context, candidateData, rejectedData) {
+          final isDropTarget = _hoverTargetIndex == index;
+          return GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () => widget.onClipTap?.call(index),
+            child: Stack(
+              children: [
+                _buildClipContainer(index, clip, clipWidth, isSelected),
+                // Drop indicator overlay
+                if (isDropTarget)
+                  Positioned.fill(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.blue, width: 2),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          );
+        },
       ),
     );
   }
 
-  Widget _buildClipContainer(Clip clip, double clipWidth, bool isSelected, {required bool showIcons}) {
+  Widget _buildClipContainer(int index, Clip clip, double clipWidth, bool isSelected) {
+    final color = _getClipColor(index);
+    final hasSegments = clip.segments.length > 1;
+    
     return Container(
       width: clipWidth,
-      margin: const EdgeInsets.all(4),
+      height: 80,
       decoration: BoxDecoration(
-        color: _clipColor(clip.id),
-        borderRadius: BorderRadius.circular(4),
-        border: isSelected ? Border.all(color: Colors.white, width: 2) : null,
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(4),
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(
-                clip.name ?? 'Clip',
-                style: const TextStyle(color: Colors.white, fontSize: 10),
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            if (showIcons) ...[
-              if (clip.isTrimmed)
-                const Icon(Icons.content_cut, size: 12, color: Colors.white70),
-              if (clip.effects.stabilize)
-                Icon(
-                  clip.processedPath != null ? Icons.check_circle : Icons.pending,
-                  size: 12,
-                  color: clip.processedPath != null ? Colors.green[300] : Colors.orange[300],
-                ),
-            ],
-          ],
+        color: color.withValues(alpha: 0.3),
+        border: Border(
+          left: BorderSide(color: Colors.grey[700]!, width: 1),
+          right: index == widget.choreography.clips.length - 1
+              ? BorderSide(color: Colors.grey[700]!, width: 1)
+              : BorderSide.none,
         ),
       ),
+      child: Stack(
+        children: [
+          // Main clip bar
+          Positioned(
+            left: 4,
+            right: 4,
+            top: 4,
+            bottom: 24, // Leave room for duration label
+            child: Container(
+              decoration: BoxDecoration(
+                color: color,
+                borderRadius: BorderRadius.circular(4),
+                border: isSelected ? Border.all(color: Colors.white, width: 2) : null,
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                child: Row(
+                  children: [
+                    // Clip number
+                    Container(
+                      width: 16,
+                      height: 16,
+                      decoration: BoxDecoration(
+                        color: Colors.black26,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Center(
+                        child: Text(
+                          '${index + 1}',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    // Clip name
+                    Expanded(
+                      child: Text(
+                        clip.name ?? 'Clip',
+                        style: const TextStyle(color: Colors.white, fontSize: 10),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    // Status icons
+                    if (clip.isTrimmed)
+                      const Icon(Icons.content_cut, size: 12, color: Colors.white70),
+                    if (hasSegments)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 3),
+                        child: Text(
+                          '${clip.segments.length}',
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 9,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    if (clip.effects.stabilize)
+                      Icon(
+                        clip.processedPath != null ? Icons.check_circle : Icons.pending,
+                        size: 12,
+                        color: clip.processedPath != null ? Colors.green[300] : Colors.orange[300],
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          // Duration label at bottom
+          Positioned(
+            left: 4,
+            bottom: 4,
+            child: Text(
+              _formatTime(clip.durationMs),
+              style: TextStyle(
+                color: Colors.grey[400],
+                fontSize: 10,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
-  }
-
-  Color _clipColor(String id) {
-    final hash = id.hashCode;
-    final hue = (hash % 360).abs().toDouble();
-    return HSLColor.fromAHSL(1.0, hue, 0.6, 0.4).toColor();
   }
 }

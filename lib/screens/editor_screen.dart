@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:package_info_plus/package_info_plus.dart';
+import 'package:shorebird_code_push/shorebird_code_push.dart';
 import '../models/choreography.dart';
 import '../models/duck_guide.dart';
 import '../services/project_service.dart';
@@ -10,6 +12,9 @@ import '../widgets/video_preview.dart';
 import '../widgets/duck_guide_overlay.dart';
 import 'trim_screen.dart';
 import 'export_dialog.dart';
+import 'style_transfer_screen.dart';
+import 'quick_edit_screen.dart';
+import 'music_picker_screen.dart';
 
 /// Main editor screen
 class EditorScreen extends StatefulWidget {
@@ -58,7 +63,133 @@ class _EditorScreenState extends State<EditorScreen> {
     if (mounted) setState(() {});
   }
 
-  Future<void> _addVideos() async {
+  /// Show options for adding a clip (camera or gallery)
+  void _showAddClipOptions() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.grey[900],
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 40,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 16),
+                decoration: BoxDecoration(
+                  color: Colors.grey[600],
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const Text(
+                'Add Clip',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
+              ),
+              const SizedBox(height: 16),
+              ListTile(
+                leading: Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.red.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.videocam, color: Colors.red, size: 28),
+                ),
+                title: const Text('Record Video', style: TextStyle(color: Colors.white)),
+                subtitle: Text('Capture a new clip with camera', style: TextStyle(color: Colors.grey[400])),
+                onTap: () {
+                  Navigator.pop(context);
+                  _captureVideo();
+                },
+              ),
+              ListTile(
+                leading: Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.photo_library, color: Colors.blue, size: 28),
+                ),
+                title: const Text('Choose from Gallery', style: TextStyle(color: Colors.white)),
+                subtitle: Text('Select existing videos', style: TextStyle(color: Colors.grey[400])),
+                onTap: () {
+                  Navigator.pop(context);
+                  _addVideosFromGallery();
+                },
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Capture video from camera
+  Future<void> _captureVideo() async {
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      final video = await ProjectService.captureVideo(
+        maxDuration: const Duration(minutes: 3),
+      );
+      
+      if (video != null) {
+        // Add clip immediately with placeholder duration
+        final fastUpdate = ProjectService.addVideosToChoreographyFast(
+          _choreography,
+          [video],
+        );
+        setState(() {
+          _choreography = fastUpdate;
+          _isLoading = false;
+        });
+
+        // Notify duck guide that clips were added
+        _duckGuide.onClipsAdded(1);
+
+        // Resolve actual durations in background
+        _resolveDurationsInBackground();
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Video recorded! 🎬'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      } else {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error capturing video: $e')),
+        );
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  /// Pick videos from gallery
+  Future<void> _addVideosFromGallery() async {
     setState(() {
       _isLoading = true;
     });
@@ -96,6 +227,11 @@ class _EditorScreenState extends State<EditorScreen> {
         });
       }
     }
+  }
+
+  /// Legacy method for backwards compatibility
+  Future<void> _addVideos() async {
+    _showAddClipOptions();
   }
 
   Future<void> _resolveDurationsInBackground() async {
@@ -284,6 +420,20 @@ class _EditorScreenState extends State<EditorScreen> {
               },
             ),
             
+            // Quick Edit option (speed, reverse, filters, stickers)
+            ListTile(
+              leading: Icon(Icons.auto_awesome, color: Colors.amber[400]),
+              title: Text('Quick Edit ✨', style: TextStyle(color: Colors.amber[400])),
+              subtitle: Text(
+                _getQuickEditSummary(clip),
+                style: TextStyle(color: Colors.grey[400]),
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                _openQuickEdit(index);
+              },
+            ),
+            
             // Stabilize option
             SwitchListTile(
               secondary: const Icon(Icons.auto_fix_high, color: Colors.white),
@@ -298,6 +448,20 @@ class _EditorScreenState extends State<EditorScreen> {
               onChanged: (value) {
                 _toggleStabilization(index);
                 Navigator.pop(context);
+              },
+            ),
+            
+            // Style Transfer option
+            ListTile(
+              leading: Icon(Icons.palette, color: Colors.purple[300]),
+              title: Text('AI Style Transfer', style: TextStyle(color: Colors.purple[300])),
+              subtitle: Text(
+                'Transform with AI (cartoon, anime, etc.)',
+                style: TextStyle(color: Colors.grey[400]),
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                _openStyleTransfer(index);
               },
             ),
             
@@ -327,6 +491,9 @@ class _EditorScreenState extends State<EditorScreen> {
   }
 
   Future<void> _openTrimEditor(int index) async {
+    // Pause preview before opening trim screen
+    _previewKey.currentState?.pause();
+    
     final clip = _choreography.clips[index];
     final result = await Navigator.push<List<ClipTrim>>(
       context,
@@ -337,6 +504,113 @@ class _EditorScreenState extends State<EditorScreen> {
 
     if (result != null && mounted) {
       _updateClipSegments(index, result);
+    }
+  }
+
+  String _getQuickEditSummary(Clip clip) {
+    final parts = <String>[];
+    if (clip.effects.speed != 1.0) parts.add('${clip.effects.speed}x');
+    if (clip.effects.reverse) parts.add('reversed');
+    if (clip.effects.filter != VideoFilter.none) parts.add(clip.effects.filter.displayName);
+    if (clip.effects.stickers.isNotEmpty) parts.add('${clip.effects.stickers.length} stickers');
+    return parts.isEmpty ? 'Speed, filters, stickers & more' : parts.join(', ');
+  }
+
+  Future<void> _openQuickEdit(int index) async {
+    _previewKey.currentState?.pause();
+    
+    final clip = _choreography.clips[index];
+    final result = await Navigator.push<ClipEffects>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => QuickEditScreen(clip: clip),
+      ),
+    );
+
+    if (result != null && mounted) {
+      final clips = List<Clip>.from(_choreography.clips);
+      clips[index] = clips[index].copyWith(effects: result);
+      
+      setState(() {
+        _choreography = Choreography(
+          version: _choreography.version,
+          clips: clips,
+          name: _choreography.name,
+          createdAt: _choreography.createdAt,
+          modifiedAt: DateTime.now(),
+          musicTrack: _choreography.musicTrack,
+          musicVolume: _choreography.musicVolume,
+          keepOriginalAudio: _choreography.keepOriginalAudio,
+        );
+      });
+    }
+  }
+
+  Future<void> _openMusicPicker() async {
+    final result = await Navigator.push<Map<String, dynamic>>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => MusicPickerScreen(
+          currentTrack: _choreography.musicTrack,
+          currentVolume: _choreography.musicVolume,
+          keepOriginalAudio: _choreography.keepOriginalAudio,
+        ),
+      ),
+    );
+
+    if (result != null && mounted) {
+      setState(() {
+        _choreography = _choreography.copyWith(
+          musicTrack: result['track'] as MusicTrack,
+          musicVolume: result['volume'] as double,
+          keepOriginalAudio: result['keepOriginal'] as bool,
+        );
+      });
+    }
+  }
+
+  Future<void> _openStyleTransfer(int index) async {
+    // Pause preview before opening style transfer screen
+    _previewKey.currentState?.pause();
+    
+    final clip = _choreography.clips[index];
+    
+    if (!mounted) return;
+    
+    final result = await Navigator.push<StyleTransferResult>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => StyleTransferScreen(clip: clip),
+      ),
+    );
+
+    if (result != null && mounted) {
+      // Update clip with styled video as the processed path
+      final clips = List<Clip>.from(_choreography.clips);
+      clips[index] = clips[index].copyWith(
+        processedPath: result.path,
+        effects: clips[index].effects.copyWith(
+          styled: true,
+          styleName: result.styleName,
+        ),
+      );
+      
+      setState(() {
+        _choreography = Choreography(
+          version: _choreography.version,
+          clips: clips,
+          name: _choreography.name,
+          createdAt: _choreography.createdAt,
+          modifiedAt: DateTime.now(),
+        );
+      });
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Style applied! Playing styled version.'),
+          backgroundColor: Colors.purple,
+        ),
+      );
     }
   }
 
@@ -433,6 +707,92 @@ class _EditorScreenState extends State<EditorScreen> {
     final minutes = (seconds / 60).floor();
     final secs = seconds % 60;
     return '${minutes.toString().padLeft(2, '0')}:${secs.toString().padLeft(2, '0')}';
+  }
+
+  Future<void> _showVersionInfo() async {
+    // Get package info
+    final packageInfo = await PackageInfo.fromPlatform();
+    
+    // Get Shorebird patch info
+    final updater = ShorebirdUpdater();
+    final isShorebird = updater.isAvailable;
+    int? patchNumber;
+    bool isNewPatchAvailable = false;
+    
+    if (isShorebird) {
+      final currentPatch = await updater.readCurrentPatch();
+      patchNumber = currentPatch?.number;
+      final status = await updater.checkForUpdate();
+      isNewPatchAvailable = status == UpdateStatus.outdated;
+    }
+    
+    if (!mounted) return;
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Colors.grey[900],
+        title: const Row(
+          children: [
+            Text('🐥', style: TextStyle(fontSize: 28)),
+            SizedBox(width: 8),
+            Text('ClipKid', style: TextStyle(color: Colors.white)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _versionRow('Version', packageInfo.version),
+            _versionRow('Build', packageInfo.buildNumber),
+            if (isShorebird) ...[
+              _versionRow('Patch', patchNumber?.toString() ?? 'Base'),
+              if (isNewPatchAvailable)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: const Row(
+                      children: [
+                        Icon(Icons.system_update, color: Colors.blue, size: 16),
+                        SizedBox(width: 8),
+                        Text(
+                          'Update available!\nRestart app to install.',
+                          style: TextStyle(color: Colors.blue, fontSize: 12),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+            ] else
+              _versionRow('Updates', 'Not available'),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+  
+  Widget _versionRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: TextStyle(color: Colors.grey[400])),
+          Text(value, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        ],
+      ),
+    );
   }
 
   void _renameProject() {
@@ -624,8 +984,11 @@ class _EditorScreenState extends State<EditorScreen> {
           ),
         ),
         backgroundColor: Colors.grey[900],
-        leading: Center(
-          child: Text('🐥', style: TextStyle(fontSize: 24)),
+        leading: GestureDetector(
+          onTap: _showVersionInfo,
+          child: const Center(
+            child: Text('🐥', style: TextStyle(fontSize: 24)),
+          ),
         ),
         actions: [
           // Add Videos button
@@ -639,6 +1002,19 @@ class _EditorScreenState extends State<EditorScreen> {
                 : const Icon(Icons.add),
             onPressed: (_isLoading || _isProcessing || _isExporting) ? null : _addVideos,
             tooltip: 'Add Videos',
+          ),
+          // Music button
+          IconButton(
+            icon: Icon(
+              Icons.music_note,
+              color: _choreography.musicTrack != MusicTrack.none 
+                  ? Colors.purple[300] 
+                  : null,
+            ),
+            onPressed: (_choreography.clips.isEmpty || _isProcessing || _isExporting) 
+                ? null 
+                : _openMusicPicker,
+            tooltip: 'Add Music',
           ),
           // Export button
           IconButton(

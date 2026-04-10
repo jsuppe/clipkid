@@ -22,8 +22,8 @@ enum StylePreset {
 /// Service for AI-powered style transfer on video frames
 /// Uses ClipKid backend API (no API key needed on client)
 class StyleTransferService {
-  // Backend API on melchior
-  static const String _apiBaseUrl = 'http://192.168.1.154:8091';  // TODO: Make configurable
+  // ClipKid backend API (public endpoint)
+  static const String _apiBaseUrl = 'https://clipkid-api.ruminateai.com';
   
   /// Transform a single image with a style preset
   Future<File?> transformImage({

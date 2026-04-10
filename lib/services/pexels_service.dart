@@ -40,8 +40,8 @@ class PexelsVideo {
 /// Service for browsing and downloading kid-friendly stock videos from Pexels.
 /// Uses the ClipKid backend API to keep the Pexels API key on the server.
 class PexelsService {
-  // Backend API on melchior (same as style transfer service)
-  static const String _apiBaseUrl = 'http://192.168.1.154:8091';
+  // ClipKid backend API (public endpoint)
+  static const String _apiBaseUrl = 'https://clipkid-api.ruminateai.com';
 
   /// Search Pexels for videos matching [query].
   Future<List<PexelsVideo>> search(String query, {int page = 1, int perPage = 20}) async {

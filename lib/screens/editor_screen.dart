@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -15,6 +16,7 @@ import 'export_dialog.dart';
 import 'style_transfer_screen.dart';
 import 'quick_edit_screen.dart';
 import 'music_picker_screen.dart';
+import 'pexels_browser_screen.dart';
 
 /// Main editor screen
 class EditorScreen extends StatefulWidget {
@@ -127,6 +129,22 @@ class _EditorScreenState extends State<EditorScreen> {
                   _addVideosFromGallery();
                 },
               ),
+              ListTile(
+                leading: Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.green.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.public, color: Colors.green, size: 28),
+                ),
+                title: const Text('Browse Stock Videos 🎬', style: TextStyle(color: Colors.white)),
+                subtitle: Text('Find awesome clips from the internet', style: TextStyle(color: Colors.grey[400])),
+                onTap: () {
+                  Navigator.pop(context);
+                  _addVideoFromPexels();
+                },
+              ),
               const SizedBox(height: 8),
             ],
           ),
@@ -221,6 +239,44 @@ class _EditorScreenState extends State<EditorScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error adding videos: $e')),
+        );
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  /// Browse and download a video from Pexels
+  Future<void> _addVideoFromPexels() async {
+    final downloadedPath = await Navigator.push<String?>(
+      context,
+      MaterialPageRoute(builder: (_) => const PexelsBrowserScreen()),
+    );
+
+    if (downloadedPath == null || downloadedPath.isEmpty) return;
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      final file = File(downloadedPath);
+      final fastUpdate = ProjectService.addVideosToChoreographyFast(
+        _choreography,
+        [file],
+      );
+      setState(() {
+        _choreography = fastUpdate;
+        _isLoading = false;
+      });
+
+      _duckGuide.onClipsAdded(1);
+      _resolveDurationsInBackground();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error adding video: $e')),
         );
         setState(() {
           _isLoading = false;
@@ -977,7 +1033,12 @@ class _EditorScreenState extends State<EditorScreen> {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text(_choreography.name ?? 'New Project'),
+              Flexible(
+                child: Text(
+                  _choreography.name ?? 'New Project',
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
               const SizedBox(width: 4),
               Icon(Icons.edit, size: 16, color: Colors.grey[400]),
             ],

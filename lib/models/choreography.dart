@@ -278,6 +278,8 @@ class ClipEffects {
   final VideoFilter filter; // Color filter preset
   final List<StickerOverlay> stickers; // Emoji/sticker overlays
   final List<TextOverlay> textOverlays; // Text overlays
+  final int freezeEndMs; // Freeze last frame for this many ms (0 = no freeze)
+  final String? backgroundRemovalPath; // Path to bg-removed clip if processed
 
   const ClipEffects({
     this.stabilize = false,
@@ -289,6 +291,8 @@ class ClipEffects {
     this.filter = VideoFilter.none,
     this.stickers = const [],
     this.textOverlays = const [],
+    this.freezeEndMs = 0,
+    this.backgroundRemovalPath,
   });
 
   Map<String, dynamic> toJson() => {
@@ -301,6 +305,8 @@ class ClipEffects {
         if (filter != VideoFilter.none) 'filter': filter.name,
         if (stickers.isNotEmpty) 'stickers': stickers.map((s) => s.toJson()).toList(),
         if (textOverlays.isNotEmpty) 'textOverlays': textOverlays.map((t) => t.toJson()).toList(),
+        if (freezeEndMs > 0) 'freezeEndMs': freezeEndMs,
+        if (backgroundRemovalPath != null) 'backgroundRemovalPath': backgroundRemovalPath,
       };
 
   factory ClipEffects.fromJson(Map<String, dynamic>? json) {
@@ -322,6 +328,8 @@ class ClipEffects {
       textOverlays: (json['textOverlays'] as List<dynamic>?)
           ?.map((t) => TextOverlay.fromJson(t as Map<String, dynamic>))
           .toList() ?? [],
+      freezeEndMs: json['freezeEndMs'] as int? ?? 0,
+      backgroundRemovalPath: json['backgroundRemovalPath'] as String?,
     );
   }
 
@@ -335,6 +343,8 @@ class ClipEffects {
     VideoFilter? filter,
     List<StickerOverlay>? stickers,
     List<TextOverlay>? textOverlays,
+    int? freezeEndMs,
+    String? backgroundRemovalPath,
   }) =>
       ClipEffects(
         stabilize: stabilize ?? this.stabilize,
@@ -346,6 +356,8 @@ class ClipEffects {
         filter: filter ?? this.filter,
         stickers: stickers ?? this.stickers,
         textOverlays: textOverlays ?? this.textOverlays,
+        freezeEndMs: freezeEndMs ?? this.freezeEndMs,
+        backgroundRemovalPath: backgroundRemovalPath ?? this.backgroundRemovalPath,
       );
 }
 
@@ -381,10 +393,11 @@ class Clip {
   List<ClipTrim> get effectiveSegments => 
       segments.isNotEmpty ? segments : [trim];
 
-  /// Duration in timeline (after trim/segments and speed adjustment)
+  /// Duration in timeline (after trim/segments, speed adjustment, and freeze)
   int get durationMs {
     final totalTrimmed = effectiveSegments.fold<int>(0, (sum, s) => sum + s.durationMs);
-    return (totalTrimmed / effects.speed).round();
+    final base = (totalTrimmed / effects.speed).round();
+    return base + effects.freezeEndMs;
   }
 
   /// The path to use for playback (processed if available, otherwise original)

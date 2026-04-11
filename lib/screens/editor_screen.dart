@@ -320,6 +320,71 @@ class _EditorScreenState extends State<EditorScreen> {
     });
   }
 
+  /// Open a picker to set the freeze-frame duration on a clip.
+  Future<void> _pickFreezeDuration(int index) async {
+    final choice = await showModalBottomSheet<int>(
+      context: context,
+      backgroundColor: Colors.grey[900],
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 12),
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey[600],
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'Freeze Frame ❄️',
+              style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const Text(
+              'How long should the last frame hold?',
+              style: TextStyle(color: Colors.white70, fontSize: 13),
+            ),
+            const SizedBox(height: 12),
+            for (final entry in const [
+              (0, 'Off', 'No freeze'),
+              (1000, '1 second', 'A quick pause'),
+              (2000, '2 seconds', 'A dramatic pause'),
+              (3000, '3 seconds', 'A long hold'),
+            ])
+              ListTile(
+                leading: Text(
+                  entry.$1 == 0 ? '❌' : '❄️',
+                  style: const TextStyle(fontSize: 28),
+                ),
+                title: Text(entry.$2, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                subtitle: Text(entry.$3, style: const TextStyle(color: Colors.white70)),
+                onTap: () => Navigator.pop(ctx, entry.$1),
+              ),
+            const SizedBox(height: 12),
+          ],
+        ),
+      ),
+    );
+    if (choice == null || !mounted) return;
+
+    setState(() {
+      _choreography = _choreography.copyWith(
+        clips: [
+          for (var i = 0; i < _choreography.clips.length; i++)
+            if (i == index)
+              _choreography.clips[i].copyWith(
+                effects: _choreography.clips[i].effects.copyWith(freezeEndMs: choice),
+              )
+            else
+              _choreography.clips[i],
+        ],
+      );
+    });
+  }
+
   /// Run Whisper on a clip and add its transcription as caption overlays.
   Future<void> _runAutoCaption(int index) async {
     if (index < 0 || index >= _choreography.clips.length) return;
@@ -761,6 +826,23 @@ class _EditorScreenState extends State<EditorScreen> {
               onTap: () {
                 Navigator.pop(context);
                 _runAutoCaption(index);
+              },
+            ),
+
+            // Freeze Frame option
+            ListTile(
+              leading: Icon(Icons.ac_unit, color: Colors.lightBlue[300]),
+              title: Text('Freeze Frame ❄️',
+                  style: TextStyle(color: Colors.lightBlue[300])),
+              subtitle: Text(
+                clip.effects.freezeEndMs > 0
+                    ? 'Holds last frame for ${(clip.effects.freezeEndMs / 1000).toStringAsFixed(1)}s'
+                    : 'Hold the last frame at the end',
+                style: TextStyle(color: Colors.grey[400]),
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                _pickFreezeDuration(index);
               },
             ),
             

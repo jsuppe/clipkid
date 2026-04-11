@@ -250,7 +250,7 @@ class ExportService {
       outputLabel = '[outv]';
     } else {
       // xfade chain — first concat segments WITHIN a clip (if any),
-      // then xfade between consecutive clips.
+      // apply freeze-frame padding, then xfade between consecutive clips.
       final clipVideoLabels = <String>[]; // label of each clip's final video stream
       final clipDurationsSec = <double>[]; // each clip's final duration in the output timeline
 
@@ -258,19 +258,32 @@ class ExportService {
       for (int ci = 0; ci < clips.length; ci++) {
         final clip = clips[ci];
         final segs = clip.effectiveSegments;
-        final clipDuration = segs.fold<int>(0, (sum, s) => sum + s.durationMs) / 1000.0;
-        clipDurationsSec.add(clipDuration);
+        final segDuration = segs.fold<int>(0, (sum, s) => sum + s.durationMs) / 1000.0;
+        final freezeSec = clip.effects.freezeEndMs / 1000.0;
+        clipDurationsSec.add(segDuration + freezeSec);
 
+        String streamLabel;
         if (segs.length == 1) {
-          clipVideoLabels.add('[v$segIndex]');
+          streamLabel = '[v$segIndex]';
           segIndex += 1;
         } else {
-          // Concat this clip's segments into [cN]
-          final inputs =
+          // Concat this clip's segments into [pN]
+          final inputsJoin =
               List.generate(segs.length, (i) => '[v${segIndex + i}]').join();
-          filterParts.add('${inputs}concat=n=${segs.length}:v=1:a=0[c$ci]');
-          clipVideoLabels.add('[c$ci]');
+          filterParts.add('${inputsJoin}concat=n=${segs.length}:v=1:a=0[p$ci]');
+          streamLabel = '[p$ci]';
           segIndex += segs.length;
+        }
+
+        // Apply freeze-frame padding if requested
+        if (freezeSec > 0) {
+          final freezeLabel = '[c$ci]';
+          filterParts.add(
+            '${streamLabel}tpad=stop_mode=clone:stop_duration=${freezeSec.toStringAsFixed(3)}$freezeLabel',
+          );
+          clipVideoLabels.add(freezeLabel);
+        } else {
+          clipVideoLabels.add(streamLabel);
         }
       }
 

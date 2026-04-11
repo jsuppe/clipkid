@@ -4,6 +4,14 @@
 <dict>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>ClipKid needs your camera so you can record new videos to edit.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>ClipKid needs the microphone to record sound with your videos.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>ClipKid needs access to your photos so you can pick videos to edit.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>ClipKid saves your finished videos to your photo library.</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>

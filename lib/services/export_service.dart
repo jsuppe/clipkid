@@ -4,6 +4,23 @@ import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 import 'package:path_provider/path_provider.dart';
 import '../models/choreography.dart';
 import '../screens/export_dialog.dart';
+import 'overlay_renderer.dart';
+
+/// Metadata for a rendered overlay that needs to be composited into the export.
+class _OverlayExportJob {
+  final RenderedOverlayPng png;
+  final double xNormalized; // 0..1 within output frame
+  final double yNormalized; // 0..1 within output frame
+  final double startSec; // in final output timeline
+  final double endSec;
+  _OverlayExportJob({
+    required this.png,
+    required this.xNormalized,
+    required this.yNormalized,
+    required this.startSec,
+    required this.endSec,
+  });
+}
 
 /// Callback for export progress (0.0 - 1.0)
 typedef ExportProgressCallback = void Function(double progress, String status);
@@ -50,14 +67,19 @@ class ExportService {
 
     onProgress?.call(0.05, 'Preparing export...');
 
+    // Render text overlays to PNG files (WYSIWYG with preview)
+    final overlayJobs = await _prepareOverlayJobs(choreography, exportSettings);
+
     try {
       // Build FFmpeg command
-      final command = _buildExportCommand(choreography, outputPath, exportSettings);
+      final command = _buildExportCommand(
+        choreography,
+        outputPath,
+        exportSettings,
+        overlayJobs,
+      );
       print('=== EXPORT COMMAND ===');
       print(command);
-      
-      // Calculate total duration for progress
-      final totalDurationMs = choreography.totalDurationMs;
 
       onProgress?.call(0.1, 'Starting FFmpeg...');
 
@@ -67,6 +89,8 @@ class ExportService {
 
       if (ReturnCode.isSuccess(returnCode)) {
         onProgress?.call(1.0, 'Export complete!');
+        // Clean up overlay PNGs
+        await OverlayRenderer.cleanup(overlayJobs.map((j) => j.png).toList());
         return outputPath;
       } else {
         final logs = await session.getLogsAsString();
@@ -74,6 +98,7 @@ class ExportService {
         print('Command: $command');
         print('Logs: $logs');
         onProgress?.call(0.0, 'Export failed');
+        await OverlayRenderer.cleanup(overlayJobs.map((j) => j.png).toList());
         return null;
       }
     } catch (e, stack) {
@@ -81,13 +106,78 @@ class ExportService {
       print('Error: $e');
       print('Stack: $stack');
       onProgress?.call(0.0, 'Export error: $e');
+      await OverlayRenderer.cleanup(overlayJobs.map((j) => j.png).toList());
       return null;
     }
   }
 
+  /// Render all text overlays in the choreography to PNG files and compute
+  /// their timing in the output timeline (accounting for cross-clip transitions).
+  static Future<List<_OverlayExportJob>> _prepareOverlayJobs(
+    Choreography choreography,
+    ExportSettings settings,
+  ) async {
+    final jobs = <_OverlayExportJob>[];
+    final quality = settings.quality;
+
+    // Compute output-timeline (start, end) for each clip, accounting for
+    // transition overlaps with the previous clip.
+    final clipTimings = <(double start, double end)>[];
+    double cursor = 0;
+    for (int i = 0; i < choreography.clips.length; i++) {
+      final clip = choreography.clips[i];
+      final durationSec = clip.durationMs / 1000.0;
+      final startAt = cursor;
+      final endAt = startAt + durationSec;
+      clipTimings.add((startAt, endAt));
+      // Next clip starts earlier if this clip has an outgoing transition
+      final transitionSec = clip.outgoingTransition.isNone
+          ? 0.0
+          : clip.outgoingTransition.durationMs / 1000.0;
+      cursor = endAt - transitionSec;
+    }
+
+    // Walk each clip's text overlays and render them
+    for (int i = 0; i < choreography.clips.length; i++) {
+      final clip = choreography.clips[i];
+      final (clipStart, clipEnd) = clipTimings[i];
+      for (final overlay in clip.effects.textOverlays) {
+        double startSec;
+        double endSec;
+        switch (overlay.timing) {
+          case OverlayTiming.wholeClip:
+            startSec = clipStart;
+            endSec = clipEnd;
+            break;
+          case OverlayTiming.firstTwoSeconds:
+            startSec = clipStart;
+            endSec = clipStart + 2.0;
+            break;
+          case OverlayTiming.lastTwoSeconds:
+            startSec = clipEnd - 2.0;
+            endSec = clipEnd;
+            break;
+        }
+
+        final png = await OverlayRenderer.renderTextOverlayToPng(
+          overlay,
+          videoWidth: quality.width,
+        );
+        jobs.add(_OverlayExportJob(
+          png: png,
+          xNormalized: overlay.x,
+          yNormalized: overlay.y,
+          startSec: startSec,
+          endSec: endSec,
+        ));
+      }
+    }
+    return jobs;
+  }
+
   /// Debug: Get the FFmpeg command that would be used
   static String getExportCommand(Choreography choreography, ExportSettings settings) {
-    return _buildExportCommand(choreography, '/tmp/output.mp4', settings);
+    return _buildExportCommand(choreography, '/tmp/output.mp4', settings, []);
   }
 
   /// Build FFmpeg command for concatenating clips with their trims/effects
@@ -96,6 +186,7 @@ class ExportService {
     Choreography choreography,
     String outputPath,
     ExportSettings settings,
+    List<_OverlayExportJob> overlayJobs,
   ) {
     final clips = choreography.clips;
     final quality = settings.quality;
@@ -109,8 +200,8 @@ class ExportService {
       }
     }
 
-    // Single segment = direct passthrough
-    if (allSegments.length == 1) {
+    // Single segment + no overlays = direct passthrough (fastest path)
+    if (allSegments.length == 1 && overlayJobs.isEmpty) {
       final seg = allSegments[0];
       final inSec = seg.segment.inPointMs / 1000.0;
       final duration = seg.segment.durationMs / 1000.0;
@@ -142,7 +233,10 @@ class ExportService {
 
     String outputLabel;
 
-    if (!hasTransitions) {
+    if (allSegments.length == 1) {
+      // Single segment — no concat needed, use the scaled stream directly
+      outputLabel = '[v0]';
+    } else if (!hasTransitions) {
       // Simple concat (legacy path)
       final concatInputs = List.generate(allSegments.length, (i) => '[v$i]').join();
       filterParts.add('${concatInputs}concat=n=${allSegments.length}:v=1:a=0[outv]');
@@ -198,6 +292,33 @@ class ExportService {
       }
 
       outputLabel = currentLabel;
+    }
+
+    // Add overlay inputs and filter chain
+    if (overlayJobs.isNotEmpty) {
+      final segmentInputCount = allSegments.length;
+      for (int oi = 0; oi < overlayJobs.length; oi++) {
+        final job = overlayJobs[oi];
+        // Loop the overlay image so it's available for the entire video
+        inputs.write('-loop 1 -i "${job.png.path}" ');
+      }
+
+      String current = outputLabel;
+      for (int oi = 0; oi < overlayJobs.length; oi++) {
+        final job = overlayJobs[oi];
+        final inputIdx = segmentInputCount + oi;
+        // Compute top-left pixel position from normalized center position
+        final centerX = (job.xNormalized * quality.width).round();
+        final centerY = (job.yNormalized * quality.height).round();
+        final x = (centerX - job.png.width ~/ 2).clamp(0, quality.width);
+        final y = (centerY - job.png.height ~/ 2).clamp(0, quality.height);
+        final outLabel = oi == overlayJobs.length - 1 ? '[final]' : '[ov$oi]';
+        filterParts.add(
+          '$current[$inputIdx:v]overlay=x=$x:y=$y:enable=\'between(t,${job.startSec.toStringAsFixed(3)},${job.endSec.toStringAsFixed(3)})\'$outLabel',
+        );
+        current = outLabel;
+      }
+      outputLabel = current;
     }
 
     final filterComplex = filterParts.join(';');

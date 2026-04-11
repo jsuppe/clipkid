@@ -103,6 +103,107 @@ class StickerOverlay {
   );
 }
 
+/// Preset style for a text overlay. Each preset bakes in font, color,
+/// stroke, shadow, default position, and default size — kids pick ONE
+/// look instead of fiddling with a dozen parameters.
+enum TextStylePreset {
+  title('Title ⭐'),
+  bubble('Bubble 💭'),
+  comic('Comic 💥'),
+  rainbow('Rainbow 🌈'),
+  spooky('Spooky 👻'),
+  neon('Neon ⚡'),
+  caption('Caption 💬'),
+  handwritten('Handwritten ✏️');
+
+  final String displayName;
+  const TextStylePreset(this.displayName);
+}
+
+/// When a text overlay is visible within its clip.
+enum OverlayTiming {
+  wholeClip('Whole clip 🕐'),
+  firstTwoSeconds('First 2 seconds ⏱️'),
+  lastTwoSeconds('Last 2 seconds ⏱️');
+
+  final String displayName;
+  const OverlayTiming(this.displayName);
+}
+
+/// A text overlay on a clip.
+class TextOverlay {
+  final String text;
+  final TextStylePreset style;
+  final double x; // 0.0 - 1.0 (normalized position)
+  final double y; // 0.0 - 1.0 (normalized position)
+  final double scale; // 0.5 - 3.0 (relative size)
+  final OverlayTiming timing;
+
+  TextOverlay({
+    required this.text,
+    this.style = TextStylePreset.title,
+    double? x,
+    double? y,
+    this.scale = 1.0,
+    this.timing = OverlayTiming.wholeClip,
+  })  : x = x ?? _defaultX(style),
+        y = y ?? _defaultY(style);
+
+  // Default positions per style — Title goes top, Caption goes bottom, etc.
+  static double _defaultX(TextStylePreset style) => 0.5;
+  static double _defaultY(TextStylePreset style) {
+    switch (style) {
+      case TextStylePreset.title:
+        return 0.2;
+      case TextStylePreset.caption:
+        return 0.85;
+      default:
+        return 0.5;
+    }
+  }
+
+  Map<String, dynamic> toJson() => {
+        'text': text,
+        'style': style.name,
+        'x': x,
+        'y': y,
+        'scale': scale,
+        'timing': timing.name,
+      };
+
+  factory TextOverlay.fromJson(Map<String, dynamic> json) => TextOverlay(
+        text: json['text'] as String,
+        style: TextStylePreset.values.firstWhere(
+          (s) => s.name == json['style'],
+          orElse: () => TextStylePreset.title,
+        ),
+        x: (json['x'] as num?)?.toDouble(),
+        y: (json['y'] as num?)?.toDouble(),
+        scale: (json['scale'] as num?)?.toDouble() ?? 1.0,
+        timing: OverlayTiming.values.firstWhere(
+          (t) => t.name == json['timing'],
+          orElse: () => OverlayTiming.wholeClip,
+        ),
+      );
+
+  TextOverlay copyWith({
+    String? text,
+    TextStylePreset? style,
+    double? x,
+    double? y,
+    double? scale,
+    OverlayTiming? timing,
+  }) =>
+      TextOverlay(
+        text: text ?? this.text,
+        style: style ?? this.style,
+        x: x ?? this.x,
+        y: y ?? this.y,
+        scale: scale ?? this.scale,
+        timing: timing ?? this.timing,
+      );
+}
+
 class ClipEffects {
   final bool stabilize;
   final double? stabilizeStrength; // 0.0 - 1.0, default 0.5
@@ -112,6 +213,7 @@ class ClipEffects {
   final bool reverse; // Play backwards
   final VideoFilter filter; // Color filter preset
   final List<StickerOverlay> stickers; // Emoji/sticker overlays
+  final List<TextOverlay> textOverlays; // Text overlays
 
   ClipEffects({
     this.stabilize = false,
@@ -122,6 +224,7 @@ class ClipEffects {
     this.reverse = false,
     this.filter = VideoFilter.none,
     this.stickers = const [],
+    this.textOverlays = const [],
   });
 
   Map<String, dynamic> toJson() => {
@@ -133,6 +236,7 @@ class ClipEffects {
         if (reverse) 'reverse': reverse,
         if (filter != VideoFilter.none) 'filter': filter.name,
         if (stickers.isNotEmpty) 'stickers': stickers.map((s) => s.toJson()).toList(),
+        if (textOverlays.isNotEmpty) 'textOverlays': textOverlays.map((t) => t.toJson()).toList(),
       };
 
   factory ClipEffects.fromJson(Map<String, dynamic>? json) {
@@ -151,6 +255,9 @@ class ClipEffects {
       stickers: (json['stickers'] as List<dynamic>?)
           ?.map((s) => StickerOverlay.fromJson(s as Map<String, dynamic>))
           .toList() ?? [],
+      textOverlays: (json['textOverlays'] as List<dynamic>?)
+          ?.map((t) => TextOverlay.fromJson(t as Map<String, dynamic>))
+          .toList() ?? [],
     );
   }
 
@@ -163,6 +270,7 @@ class ClipEffects {
     bool? reverse,
     VideoFilter? filter,
     List<StickerOverlay>? stickers,
+    List<TextOverlay>? textOverlays,
   }) =>
       ClipEffects(
         stabilize: stabilize ?? this.stabilize,
@@ -173,6 +281,7 @@ class ClipEffects {
         reverse: reverse ?? this.reverse,
         filter: filter ?? this.filter,
         stickers: stickers ?? this.stickers,
+        textOverlays: textOverlays ?? this.textOverlays,
       );
 }
 

@@ -1,20 +1,26 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:ui' as ui show Clip;
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 import '../models/choreography.dart';
+import 'text_overlay_style.dart';
 
 /// Preview player that renders the choreography
 class VideoPreview extends StatefulWidget {
   final Choreography choreography;
   final ValueChanged<int>? onPositionChanged;
   final int? seekToMs;
+  // Called when an overlay on the current clip is moved, resized, or deleted.
+  // Parent updates the choreography and passes it back in.
+  final void Function(int clipIndex, ClipEffects newEffects)? onClipEffectsChanged;
 
   const VideoPreview({
     super.key,
     required this.choreography,
     this.onPositionChanged,
     this.seekToMs,
+    this.onClipEffectsChanged,
   });
 
   @override
@@ -27,6 +33,7 @@ class VideoPreviewState extends State<VideoPreview> {
   int _globalPositionMs = 0;
   Timer? _positionTimer;
   bool _isPlaying = false;
+  int? _selectedOverlayIndex; // which text overlay on the current clip is selected
 
   @override
   void initState() {
@@ -200,6 +207,127 @@ class VideoPreviewState extends State<VideoPreview> {
     return widget.choreography.clips[_currentClipIndex].effects.styleName;
   }
 
+  /// Whether a given text overlay should be visible at [_globalPositionMs]
+  /// based on its timing rule.
+  bool _isOverlayVisible(TextOverlay overlay, Clip clip) {
+    final clipStart = clip.startMs;
+    final clipEnd = clipStart + clip.durationMs;
+    final position = _globalPositionMs;
+    if (position < clipStart || position > clipEnd) return false;
+    final positionInClip = position - clipStart;
+    switch (overlay.timing) {
+      case OverlayTiming.wholeClip:
+        return true;
+      case OverlayTiming.firstTwoSeconds:
+        return positionInClip <= 2000;
+      case OverlayTiming.lastTwoSeconds:
+        return positionInClip >= clip.durationMs - 2000;
+    }
+  }
+
+  Widget _buildOverlayLayer(Clip clip) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return GestureDetector(
+          // Tap empty area to deselect
+          behavior: HitTestBehavior.translucent,
+          onTap: () => setState(() => _selectedOverlayIndex = null),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              for (var i = 0; i < clip.effects.textOverlays.length; i++)
+                if (_isOverlayVisible(clip.effects.textOverlays[i], clip))
+                  _buildDraggableOverlay(
+                    clip: clip,
+                    overlayIndex: i,
+                    videoSize: constraints.biggest,
+                  ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildDraggableOverlay({
+    required Clip clip,
+    required int overlayIndex,
+    required Size videoSize,
+  }) {
+    final overlay = clip.effects.textOverlays[overlayIndex];
+    final selected = _selectedOverlayIndex == overlayIndex;
+    // Base font size scales with video width for consistency across aspect ratios.
+    final baseFontSize = (videoSize.width / 12).clamp(14.0, 60.0) * overlay.scale;
+
+    return Positioned(
+      left: overlay.x * videoSize.width,
+      top: overlay.y * videoSize.height,
+      child: FractionalTranslation(
+        translation: const Offset(-0.5, -0.5),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => setState(() => _selectedOverlayIndex = overlayIndex),
+          onPanUpdate: (details) {
+            if (widget.onClipEffectsChanged == null) return;
+            final newX = (overlay.x + details.delta.dx / videoSize.width).clamp(0.05, 0.95);
+            final newY = (overlay.y + details.delta.dy / videoSize.height).clamp(0.05, 0.95);
+            final newOverlays = List<TextOverlay>.from(clip.effects.textOverlays);
+            newOverlays[overlayIndex] = overlay.copyWith(x: newX, y: newY);
+            widget.onClipEffectsChanged!(
+              _currentClipIndex,
+              clip.effects.copyWith(textOverlays: newOverlays),
+            );
+          },
+          child: Container(
+            padding: const EdgeInsets.all(4),
+            decoration: selected
+                ? BoxDecoration(
+                    border: Border.all(color: Colors.yellow, width: 2),
+                    borderRadius: BorderRadius.circular(4),
+                  )
+                : null,
+            child: Stack(
+              clipBehavior: ui.Clip.none,
+              children: [
+                StyledOverlayText(
+                  text: overlay.text,
+                  style: overlay.style,
+                  baseFontSize: baseFontSize,
+                ),
+                if (selected)
+                  Positioned(
+                    top: -10,
+                    right: -10,
+                    child: GestureDetector(
+                      onTap: () {
+                        if (widget.onClipEffectsChanged == null) return;
+                        final newOverlays = List<TextOverlay>.from(clip.effects.textOverlays)
+                          ..removeAt(overlayIndex);
+                        widget.onClipEffectsChanged!(
+                          _currentClipIndex,
+                          clip.effects.copyWith(textOverlays: newOverlays),
+                        );
+                        setState(() => _selectedOverlayIndex = null);
+                      },
+                      child: Container(
+                        width: 28,
+                        height: 28,
+                        decoration: const BoxDecoration(
+                          color: Colors.red,
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(Icons.close, color: Colors.white, size: 18),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_controller == null || !_controller!.value.isInitialized) {
@@ -221,7 +349,18 @@ class VideoPreviewState extends State<VideoPreview> {
           Center(
             child: AspectRatio(
               aspectRatio: _controller!.value.aspectRatio,
-              child: VideoPlayer(_controller!),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  VideoPlayer(_controller!),
+                  // Text overlay layer for the current clip
+                  if (_currentClipIndex >= 0 &&
+                      _currentClipIndex < widget.choreography.clips.length)
+                    _buildOverlayLayer(
+                      widget.choreography.clips[_currentClipIndex],
+                    ),
+                ],
+              ),
             ),
           ),
           // Effect badges

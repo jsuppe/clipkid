@@ -17,6 +17,7 @@ import 'style_transfer_screen.dart';
 import 'quick_edit_screen.dart';
 import 'music_picker_screen.dart';
 import 'pexels_browser_screen.dart';
+import 'text_editor_screen.dart';
 
 /// Main editor screen
 class EditorScreen extends StatefulWidget {
@@ -245,6 +246,63 @@ class _EditorScreenState extends State<EditorScreen> {
         });
       }
     }
+  }
+
+  /// Find which clip is currently playing based on global position.
+  int _currentClipIndex() {
+    if (_choreography.clips.isEmpty) return -1;
+    for (var i = 0; i < _choreography.clips.length; i++) {
+      final clip = _choreography.clips[i];
+      if (_currentPositionMs >= clip.startMs &&
+          _currentPositionMs < clip.startMs + clip.durationMs) {
+        return i;
+      }
+    }
+    return 0; // fallback to first clip
+  }
+
+  /// Open the text editor and add the result as an overlay on the current clip.
+  Future<void> _addTextOverlay() async {
+    final clipIndex = _currentClipIndex();
+    if (clipIndex < 0) return;
+
+    final result = await Navigator.push<TextOverlay?>(
+      context,
+      MaterialPageRoute(builder: (_) => const TextEditorScreen()),
+    );
+
+    if (result == null) return;
+
+    final clip = _choreography.clips[clipIndex];
+    final newOverlays = List<TextOverlay>.from(clip.effects.textOverlays)..add(result);
+    final newEffects = clip.effects.copyWith(textOverlays: newOverlays);
+    setState(() {
+      _choreography = _choreography.copyWith(
+        clips: [
+          for (var i = 0; i < _choreography.clips.length; i++)
+            if (i == clipIndex)
+              _choreography.clips[i].copyWith(effects: newEffects)
+            else
+              _choreography.clips[i],
+        ],
+      );
+    });
+  }
+
+  /// Called by VideoPreview when an overlay is dragged / deleted / resized.
+  void _onClipEffectsChanged(int clipIndex, ClipEffects newEffects) {
+    if (clipIndex < 0 || clipIndex >= _choreography.clips.length) return;
+    setState(() {
+      _choreography = _choreography.copyWith(
+        clips: [
+          for (var i = 0; i < _choreography.clips.length; i++)
+            if (i == clipIndex)
+              _choreography.clips[i].copyWith(effects: newEffects)
+            else
+              _choreography.clips[i],
+        ],
+      );
+    });
   }
 
   /// Browse and download a video from Pexels
@@ -1064,16 +1122,24 @@ class _EditorScreenState extends State<EditorScreen> {
             onPressed: (_isLoading || _isProcessing || _isExporting) ? null : _addVideos,
             tooltip: 'Add Videos',
           ),
+          // Add Text button
+          IconButton(
+            icon: const Icon(Icons.text_fields),
+            onPressed: (_choreography.clips.isEmpty || _isProcessing || _isExporting)
+                ? null
+                : _addTextOverlay,
+            tooltip: 'Add Text',
+          ),
           // Music button
           IconButton(
             icon: Icon(
               Icons.music_note,
-              color: _choreography.musicTrack != MusicTrack.none 
-                  ? Colors.purple[300] 
+              color: _choreography.musicTrack != MusicTrack.none
+                  ? Colors.purple[300]
                   : null,
             ),
-            onPressed: (_choreography.clips.isEmpty || _isProcessing || _isExporting) 
-                ? null 
+            onPressed: (_choreography.clips.isEmpty || _isProcessing || _isExporting)
+                ? null
                 : _openMusicPicker,
             tooltip: 'Add Music',
           ),
@@ -1106,6 +1172,7 @@ class _EditorScreenState extends State<EditorScreen> {
                   choreography: _choreography,
                   onPositionChanged: _onPositionChanged,
                   seekToMs: _seekToMs,
+                  onClipEffectsChanged: _onClipEffectsChanged,
                 ),
               ),
 

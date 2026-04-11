@@ -29,6 +29,7 @@ class VideoPreview extends StatefulWidget {
 
 class VideoPreviewState extends State<VideoPreview> {
   VideoPlayerController? _controller;
+  VideoPlayerController? _pipController;
   int _currentClipIndex = -1;
   int _globalPositionMs = 0;
   Timer? _positionTimer;
@@ -75,6 +76,7 @@ class VideoPreviewState extends State<VideoPreview> {
   void dispose() {
     _positionTimer?.cancel();
     _controller?.dispose();
+    _pipController?.dispose();
     super.dispose();
   }
 
@@ -83,15 +85,31 @@ class VideoPreviewState extends State<VideoPreview> {
 
     final clip = widget.choreography.clips[index];
     final oldController = _controller;
+    final oldPipController = _pipController;
 
     final newController = VideoPlayerController.file(File(clip.playbackPath));
     await newController.initialize();
-
     newController.addListener(_onVideoProgress);
+
+    // If this clip has a PIP overlay, load it as a second (looping) controller
+    VideoPlayerController? newPipController;
+    if (clip.effects.pipPath != null && File(clip.effects.pipPath!).existsSync()) {
+      try {
+        newPipController = VideoPlayerController.file(File(clip.effects.pipPath!));
+        await newPipController.initialize();
+        await newPipController.setLooping(true);
+        await newPipController.setVolume(0); // PIP is muted — main clip owns audio
+        if (_isPlaying) await newPipController.play();
+      } catch (_) {
+        newPipController?.dispose();
+        newPipController = null;
+      }
+    }
 
     if (mounted) {
       setState(() {
         _controller = newController;
+        _pipController = newPipController;
         _currentClipIndex = index;
       });
 
@@ -101,6 +119,7 @@ class VideoPreviewState extends State<VideoPreview> {
     }
 
     await oldController?.dispose();
+    await oldPipController?.dispose();
   }
 
   void _onVideoProgress() {
@@ -152,6 +171,7 @@ class VideoPreviewState extends State<VideoPreview> {
 
     if (_isPlaying) {
       await _controller!.pause();
+      await _pipController?.pause();
     } else {
       // If at end, restart from beginning
       if (_currentClipIndex == widget.choreography.clips.length - 1 &&
@@ -159,6 +179,7 @@ class VideoPreviewState extends State<VideoPreview> {
         await seekTo(0);
       }
       await _controller!.play();
+      await _pipController?.play();
     }
 
     setState(() {
@@ -172,6 +193,7 @@ class VideoPreviewState extends State<VideoPreview> {
   Future<void> pause() async {
     if (_controller != null && _isPlaying) {
       await _controller!.pause();
+      await _pipController?.pause();
       setState(() {
         _isPlaying = false;
       });
@@ -205,6 +227,57 @@ class VideoPreviewState extends State<VideoPreview> {
       return null;
     }
     return widget.choreography.clips[_currentClipIndex].effects.styleName;
+  }
+
+  /// Build the Picture-in-Picture overlay as a small circular video
+  /// in one of the four corners of the main video.
+  Widget _buildPipOverlay() {
+    final clip = widget.choreography.clips[_currentClipIndex];
+    final position = clip.effects.pipPosition;
+    const size = 0.28; // 28% of the parent dimension
+    const padding = 16.0;
+
+    Alignment alignment;
+    switch (position) {
+      case PipPosition.topLeft:
+        alignment = Alignment.topLeft;
+        break;
+      case PipPosition.topRight:
+        alignment = Alignment.topRight;
+        break;
+      case PipPosition.bottomLeft:
+        alignment = Alignment.bottomLeft;
+        break;
+      case PipPosition.bottomRight:
+        alignment = Alignment.bottomRight;
+        break;
+    }
+
+    return LayoutBuilder(
+      builder: (ctx, constraints) {
+        final pipSize = constraints.maxWidth * size;
+        return Align(
+          alignment: alignment,
+          child: Padding(
+            padding: const EdgeInsets.all(padding),
+            child: ClipOval(
+              child: SizedBox(
+                width: pipSize,
+                height: pipSize,
+                child: FittedBox(
+                  fit: BoxFit.cover,
+                  child: SizedBox(
+                    width: _pipController!.value.size.width,
+                    height: _pipController!.value.size.height,
+                    child: VideoPlayer(_pipController!),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
   }
 
   /// Whether a given text overlay should be visible at [_globalPositionMs]
@@ -357,6 +430,9 @@ class VideoPreviewState extends State<VideoPreview> {
                 fit: StackFit.expand,
                 children: [
                   VideoPlayer(_controller!),
+                  // Picture-in-Picture overlay
+                  if (_pipController != null && _pipController!.value.isInitialized)
+                    _buildPipOverlay(),
                   // Text overlay layer for the current clip
                   if (_currentClipIndex >= 0 &&
                       _currentClipIndex < widget.choreography.clips.length)

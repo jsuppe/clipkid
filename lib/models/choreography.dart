@@ -170,6 +170,17 @@ enum TextStylePreset {
   const TextStylePreset(this.displayName);
 }
 
+/// Where to place a Picture-in-Picture overlay on the main clip.
+enum PipPosition {
+  topLeft('Top Left ↖️'),
+  topRight('Top Right ↗️'),
+  bottomLeft('Bottom Left ↙️'),
+  bottomRight('Bottom Right ↘️');
+
+  final String displayName;
+  const PipPosition(this.displayName);
+}
+
 /// When a text overlay is visible within its clip.
 enum OverlayTiming {
   wholeClip('Whole clip 🕐'),
@@ -280,6 +291,8 @@ class ClipEffects {
   final List<TextOverlay> textOverlays; // Text overlays
   final int freezeEndMs; // Freeze last frame for this many ms (0 = no freeze)
   final String? backgroundRemovalPath; // Path to bg-removed clip if processed
+  final String? pipPath; // Path to a clip that should play as Picture-in-Picture
+  final PipPosition pipPosition;
 
   const ClipEffects({
     this.stabilize = false,
@@ -293,6 +306,8 @@ class ClipEffects {
     this.textOverlays = const [],
     this.freezeEndMs = 0,
     this.backgroundRemovalPath,
+    this.pipPath,
+    this.pipPosition = PipPosition.bottomRight,
   });
 
   Map<String, dynamic> toJson() => {
@@ -307,6 +322,8 @@ class ClipEffects {
         if (textOverlays.isNotEmpty) 'textOverlays': textOverlays.map((t) => t.toJson()).toList(),
         if (freezeEndMs > 0) 'freezeEndMs': freezeEndMs,
         if (backgroundRemovalPath != null) 'backgroundRemovalPath': backgroundRemovalPath,
+        if (pipPath != null) 'pipPath': pipPath,
+        if (pipPath != null) 'pipPosition': pipPosition.name,
       };
 
   factory ClipEffects.fromJson(Map<String, dynamic>? json) {
@@ -330,6 +347,11 @@ class ClipEffects {
           .toList() ?? [],
       freezeEndMs: json['freezeEndMs'] as int? ?? 0,
       backgroundRemovalPath: json['backgroundRemovalPath'] as String?,
+      pipPath: json['pipPath'] as String?,
+      pipPosition: PipPosition.values.firstWhere(
+        (p) => p.name == json['pipPosition'],
+        orElse: () => PipPosition.bottomRight,
+      ),
     );
   }
 
@@ -345,6 +367,8 @@ class ClipEffects {
     List<TextOverlay>? textOverlays,
     int? freezeEndMs,
     String? backgroundRemovalPath,
+    String? pipPath,
+    PipPosition? pipPosition,
   }) =>
       ClipEffects(
         stabilize: stabilize ?? this.stabilize,
@@ -358,6 +382,8 @@ class ClipEffects {
         textOverlays: textOverlays ?? this.textOverlays,
         freezeEndMs: freezeEndMs ?? this.freezeEndMs,
         backgroundRemovalPath: backgroundRemovalPath ?? this.backgroundRemovalPath,
+        pipPath: pipPath ?? this.pipPath,
+        pipPosition: pipPosition ?? this.pipPosition,
       );
 }
 

@@ -235,6 +235,17 @@ class ExportService {
       );
     }
 
+    // PIP inputs — one per clip that has a PIP set. They're looped so they
+    // cover the entire clip duration.
+    final pipClipIndices = <int>[];
+    for (int ci = 0; ci < clips.length; ci++) {
+      if (clips[ci].effects.pipPath != null &&
+          File(clips[ci].effects.pipPath!).existsSync()) {
+        pipClipIndices.add(ci);
+        inputs.write('-stream_loop -1 -i "${clips[ci].effects.pipPath}" ');
+      }
+    }
+
     // Detect if any cross-clip transitions are set (non-none)
     final hasTransitions = clips.any((c) => !c.outgoingTransition.isNone);
 
@@ -314,9 +325,69 @@ class ExportService {
       outputLabel = currentLabel;
     }
 
+    // Add PIP overlays. These are placed BEFORE text overlays so that text
+    // can go on top of the PIP.
+    if (pipClipIndices.isNotEmpty) {
+      // Compute output-timeline (start, end) for each clip (accounting for
+      // transitions) — same math as overlay timing.
+      final clipTimings = <(double, double)>[];
+      double cursor = 0;
+      for (int ci = 0; ci < clips.length; ci++) {
+        final clip = clips[ci];
+        final duration = clip.durationMs / 1000.0;
+        clipTimings.add((cursor, cursor + duration));
+        final transitionSec = clip.outgoingTransition.isNone
+            ? 0.0
+            : clip.outgoingTransition.durationMs / 1000.0;
+        cursor = cursor + duration - transitionSec;
+      }
+
+      int pipInputIdx = allSegments.length;
+      String current = outputLabel;
+      for (int pi = 0; pi < pipClipIndices.length; pi++) {
+        final ci = pipClipIndices[pi];
+        final clip = clips[ci];
+        final (clipStart, clipEnd) = clipTimings[ci];
+        final pipSize = (quality.width * 0.28).round();
+        // Scale the PIP input
+        filterParts.add('[$pipInputIdx:v]scale=$pipSize:-1[pip$pi]');
+
+        // Compute position based on corner
+        const margin = 24;
+        String x, y;
+        switch (clip.effects.pipPosition) {
+          case PipPosition.topLeft:
+            x = '$margin';
+            y = '$margin';
+            break;
+          case PipPosition.topRight:
+            x = 'W-w-$margin';
+            y = '$margin';
+            break;
+          case PipPosition.bottomLeft:
+            x = '$margin';
+            y = 'H-h-$margin';
+            break;
+          case PipPosition.bottomRight:
+            x = 'W-w-$margin';
+            y = 'H-h-$margin';
+            break;
+        }
+
+        final outLabel = '[pov$pi]';
+        filterParts.add(
+          '$current[pip$pi]overlay=x=$x:y=$y:enable=\'between(t,${clipStart.toStringAsFixed(3)},${clipEnd.toStringAsFixed(3)})\'$outLabel',
+        );
+        current = outLabel;
+        pipInputIdx++;
+      }
+      outputLabel = current;
+    }
+
     // Add overlay inputs and filter chain
     if (overlayJobs.isNotEmpty) {
-      final segmentInputCount = allSegments.length;
+      // Inputs so far: segment videos + PIP videos. Text overlay PNGs come next.
+      final overlayStartIdx = allSegments.length + pipClipIndices.length;
       for (int oi = 0; oi < overlayJobs.length; oi++) {
         final job = overlayJobs[oi];
         // Loop the overlay image so it's available for the entire video
@@ -326,7 +397,7 @@ class ExportService {
       String current = outputLabel;
       for (int oi = 0; oi < overlayJobs.length; oi++) {
         final job = overlayJobs[oi];
-        final inputIdx = segmentInputCount + oi;
+        final inputIdx = overlayStartIdx + oi;
         // Compute top-left pixel position from normalized center position
         final centerX = (job.xNormalized * quality.width).round();
         final centerY = (job.yNormalized * quality.height).round();

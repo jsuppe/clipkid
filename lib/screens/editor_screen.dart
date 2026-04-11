@@ -321,6 +321,176 @@ class _EditorScreenState extends State<EditorScreen> {
     });
   }
 
+  /// Add or edit the Picture-in-Picture overlay on a clip.
+  Future<void> _addPictureInPicture(int index) async {
+    if (index < 0 || index >= _choreography.clips.length) return;
+    final clip = _choreography.clips[index];
+
+    if (clip.effects.pipPath != null) {
+      // Already has a PIP — show edit menu (position / remove)
+      final action = await showModalBottomSheet<String>(
+        context: context,
+        backgroundColor: Colors.grey[900],
+        builder: (ctx) => SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 12),
+              Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                    color: Colors.grey[600],
+                    borderRadius: BorderRadius.circular(2)),
+              ),
+              const SizedBox(height: 12),
+              const Text('Picture-in-Picture 📱',
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold)),
+              const SizedBox(height: 12),
+              for (final pos in PipPosition.values)
+                ListTile(
+                  leading: Icon(
+                    clip.effects.pipPosition == pos
+                        ? Icons.radio_button_checked
+                        : Icons.radio_button_unchecked,
+                    color: Colors.pink[300],
+                  ),
+                  title: Text(pos.displayName,
+                      style: const TextStyle(color: Colors.white)),
+                  onTap: () => Navigator.pop(ctx, 'pos:${pos.name}'),
+                ),
+              const Divider(color: Colors.grey),
+              ListTile(
+                leading: const Icon(Icons.delete_outline, color: Colors.red),
+                title: const Text('Remove PIP',
+                    style: TextStyle(color: Colors.red)),
+                onTap: () => Navigator.pop(ctx, 'remove'),
+              ),
+              const SizedBox(height: 12),
+            ],
+          ),
+        ),
+      );
+      if (action == null || !mounted) return;
+
+      if (action == 'remove') {
+        setState(() {
+          _choreography = _choreography.copyWith(
+            clips: [
+              for (var i = 0; i < _choreography.clips.length; i++)
+                if (i == index)
+                  _choreography.clips[i].copyWith(
+                    effects: _choreography.clips[i]
+                        .effects
+                        .copyWith(pipPath: null),
+                  )
+                else
+                  _choreography.clips[i],
+            ],
+          );
+        });
+      } else if (action.startsWith('pos:')) {
+        final posName = action.substring(4);
+        final newPos =
+            PipPosition.values.firstWhere((p) => p.name == posName);
+        setState(() {
+          _choreography = _choreography.copyWith(
+            clips: [
+              for (var i = 0; i < _choreography.clips.length; i++)
+                if (i == index)
+                  _choreography.clips[i].copyWith(
+                    effects: _choreography.clips[i]
+                        .effects
+                        .copyWith(pipPosition: newPos),
+                  )
+                else
+                  _choreography.clips[i],
+            ],
+          );
+        });
+      }
+      return;
+    }
+
+    // No PIP yet — pick a source for the overlay video
+    final source = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: Colors.grey[900],
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 12),
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                  color: Colors.grey[600],
+                  borderRadius: BorderRadius.circular(2)),
+            ),
+            const SizedBox(height: 12),
+            const Text('Add Picture-in-Picture',
+                style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold)),
+            const Text('Where should the small video come from?',
+                style: TextStyle(color: Colors.white70, fontSize: 13)),
+            const SizedBox(height: 8),
+            ListTile(
+              leading:
+                  const Icon(Icons.photo_library, color: Colors.blue, size: 32),
+              title: const Text('From my gallery',
+                  style: TextStyle(color: Colors.white)),
+              onTap: () => Navigator.pop(ctx, 'gallery'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.public, color: Colors.green, size: 32),
+              title: const Text('Browse stock videos 🎬',
+                  style: TextStyle(color: Colors.white)),
+              onTap: () => Navigator.pop(ctx, 'pexels'),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+    if (source == null || !mounted) return;
+
+    String? path;
+    if (source == 'gallery') {
+      final videos = await ProjectService.pickVideos();
+      if (videos != null && videos.isNotEmpty) path = videos.first.path;
+    } else if (source == 'pexels') {
+      path = await Navigator.push<String?>(
+        context,
+        MaterialPageRoute(builder: (_) => const PexelsBrowserScreen()),
+      );
+    }
+    if (path == null || !mounted) return;
+
+    setState(() {
+      _choreography = _choreography.copyWith(
+        clips: [
+          for (var i = 0; i < _choreography.clips.length; i++)
+            if (i == index)
+              _choreography.clips[i].copyWith(
+                effects:
+                    _choreography.clips[i].effects.copyWith(pipPath: path),
+              )
+            else
+              _choreography.clips[i],
+        ],
+      );
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Picture-in-Picture added ✨')),
+    );
+  }
+
   /// Run AI background removal on a clip. First asks which color to use
   /// for the new background, then uploads and processes.
   Future<void> _runBackgroundRemoval(int index) async {
@@ -978,6 +1148,23 @@ class _EditorScreenState extends State<EditorScreen> {
               onTap: () {
                 Navigator.pop(context);
                 _runBackgroundRemoval(index);
+              },
+            ),
+
+            // Picture-in-Picture option
+            ListTile(
+              leading: Icon(Icons.picture_in_picture, color: Colors.pink[300]),
+              title: Text('Picture-in-Picture 📱',
+                  style: TextStyle(color: Colors.pink[300])),
+              subtitle: Text(
+                clip.effects.pipPath != null
+                    ? 'Showing overlay (${clip.effects.pipPosition.displayName})'
+                    : 'Add a small video on top of this one',
+                style: TextStyle(color: Colors.grey[400]),
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                _addPictureInPicture(index);
               },
             ),
             

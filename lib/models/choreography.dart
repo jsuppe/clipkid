@@ -103,6 +103,56 @@ class StickerOverlay {
   );
 }
 
+/// Transition between two consecutive clips.
+/// Each preset maps to an ffmpeg xfade transition name.
+enum TransitionType {
+  none('Cut ✂️', '', 0),
+  fade('Fade 🌫️', 'fade', 500),
+  slideLeft('Slide ⬅️', 'slideleft', 500),
+  slideRight('Slide ➡️', 'slideright', 500),
+  slideUp('Slide ⬆️', 'slideup', 500),
+  slideDown('Slide ⬇️', 'slidedown', 500),
+  wipe('Wipe 🧹', 'wipeleft', 500),
+  zoom('Zoom 🔍', 'zoomin', 500),
+  circleClose('Circle ⭕', 'circleclose', 500);
+
+  final String displayName;
+  final String xfadeName; // ffmpeg xfade transition identifier
+  final int defaultDurationMs;
+  const TransitionType(this.displayName, this.xfadeName, this.defaultDurationMs);
+}
+
+/// A transition applied between this clip and the next one.
+class Transition {
+  final TransitionType type;
+  final int durationMs;
+
+  const Transition({
+    this.type = TransitionType.none,
+    this.durationMs = 500,
+  });
+
+  bool get isNone => type == TransitionType.none;
+
+  Map<String, dynamic> toJson() => {
+        'type': type.name,
+        'durationMs': durationMs,
+      };
+
+  factory Transition.fromJson(Map<String, dynamic> json) => Transition(
+        type: TransitionType.values.firstWhere(
+          (t) => t.name == json['type'],
+          orElse: () => TransitionType.none,
+        ),
+        durationMs: json['durationMs'] as int? ?? 500,
+      );
+
+  Transition copyWith({TransitionType? type, int? durationMs}) => Transition(
+        type: type ?? this.type,
+        durationMs: durationMs ?? this.durationMs,
+      );
+}
+
 /// Preset style for a text overlay. Each preset bakes in font, color,
 /// stroke, shadow, default position, and default size — kids pick ONE
 /// look instead of fiddling with a dozen parameters.
@@ -296,6 +346,7 @@ class Clip {
   final List<ClipTrim> segments; // Multiple keep segments (takes precedence over trim)
   final String? name;
   final ClipEffects effects;
+  final Transition outgoingTransition; // Transition to the next clip (last clip's ignored)
 
   Clip({
     required this.id,
@@ -307,6 +358,7 @@ class Clip {
     List<ClipTrim>? segments,
     this.name,
     ClipEffects? effects,
+    this.outgoingTransition = const Transition(),
   }) : trim = trim ?? ClipTrim(inPointMs: 0, outPointMs: sourceDurationMs),
        segments = segments ?? [],
        effects = effects ?? ClipEffects();
@@ -334,6 +386,7 @@ class Clip {
         if (segments.isNotEmpty) 'segments': segments.map((s) => s.toJson()).toList(),
         if (name != null) 'name': name,
         'effects': effects.toJson(),
+        if (!outgoingTransition.isNone) 'transition': outgoingTransition.toJson(),
       };
 
   factory Clip.fromJson(Map<String, dynamic> json) {
@@ -352,6 +405,9 @@ class Clip {
             .toList() ?? [],
         name: json['name'] as String?,
         effects: ClipEffects.fromJson(json['effects'] as Map<String, dynamic>?),
+        outgoingTransition: json['transition'] != null
+            ? Transition.fromJson(json['transition'] as Map<String, dynamic>)
+            : const Transition(),
       );
   }
 
@@ -386,6 +442,7 @@ class Clip {
     List<ClipTrim>? segments,
     String? name,
     ClipEffects? effects,
+    Transition? outgoingTransition,
   }) =>
       Clip(
         id: id ?? this.id,
@@ -397,6 +454,7 @@ class Clip {
         segments: segments ?? this.segments,
         name: name ?? this.name,
         effects: effects ?? this.effects,
+        outgoingTransition: outgoingTransition ?? this.outgoingTransition,
       );
 }
 

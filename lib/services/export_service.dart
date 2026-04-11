@@ -91,66 +91,124 @@ class ExportService {
   }
 
   /// Build FFmpeg command for concatenating clips with their trims/effects
-  /// Supports multiple segments per clip
+  /// Supports multiple segments per clip and cross-clip transitions.
   static String _buildExportCommand(
-    Choreography choreography, 
+    Choreography choreography,
     String outputPath,
     ExportSettings settings,
   ) {
     final clips = choreography.clips;
     final quality = settings.quality;
-    
-    // Flatten all segments from all clips into a list of (path, segment) pairs
+
+    // Flatten all segments from all clips into a list of (path, segment, clipIndex) tuples
     final allSegments = <_ExportSegment>[];
-    for (final clip in clips) {
+    for (int ci = 0; ci < clips.length; ci++) {
+      final clip = clips[ci];
       for (final segment in clip.effectiveSegments) {
-        allSegments.add(_ExportSegment(clip.playbackPath, segment));
+        allSegments.add(_ExportSegment(clip.playbackPath, segment, ci));
       }
     }
-    
-    // For single segment, use simpler command
+
+    // Single segment = direct passthrough
     if (allSegments.length == 1) {
       final seg = allSegments[0];
       final inSec = seg.segment.inPointMs / 1000.0;
       final duration = seg.segment.durationMs / 1000.0;
-      
+
       final audioArgs = settings.includeAudio ? '-c:a aac -b:a 128k -ac 2' : '-an';
-      
+
       return '-y -ss $inSec -t $duration -i "${seg.path}" '
-             '-vf "scale=${quality.width}:${quality.height}:force_original_aspect_ratio=decrease,pad=${quality.width}:${quality.height}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p" '
-             '-c:v libx264 -preset fast -crf ${quality.crf} $audioArgs '
-             '-movflags +faststart "$outputPath"';
+          '-vf "scale=${quality.width}:${quality.height}:force_original_aspect_ratio=decrease,pad=${quality.width}:${quality.height}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p" '
+          '-c:v libx264 -preset fast -crf ${quality.crf} $audioArgs '
+          '-movflags +faststart "$outputPath"';
     }
-    
-    // For multiple segments, use filter_complex
+
+    // Build inputs and per-segment scale filters
     final inputs = StringBuffer();
     final filterParts = <String>[];
-    
+
     for (int i = 0; i < allSegments.length; i++) {
       final seg = allSegments[i];
       final inSec = seg.segment.inPointMs / 1000.0;
       final duration = seg.segment.durationMs / 1000.0;
-      
       inputs.write('-ss $inSec -t $duration -i "${seg.path}" ');
-      
-      // Scale video
-      filterParts.add('[$i:v]scale=${quality.width}:${quality.height}:force_original_aspect_ratio=decrease,pad=${quality.width}:${quality.height}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p[v$i]');
+      filterParts.add(
+        '[$i:v]scale=${quality.width}:${quality.height}:force_original_aspect_ratio=decrease,pad=${quality.width}:${quality.height}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p,fps=30[v$i]',
+      );
     }
-    
-    // Concat all video streams
-    final concatInputs = List.generate(allSegments.length, (i) => '[v$i]').join();
-    filterParts.add('${concatInputs}concat=n=${allSegments.length}:v=1:a=0[outv]');
-    
+
+    // Detect if any cross-clip transitions are set (non-none)
+    final hasTransitions = clips.any((c) => !c.outgoingTransition.isNone);
+
+    String outputLabel;
+
+    if (!hasTransitions) {
+      // Simple concat (legacy path)
+      final concatInputs = List.generate(allSegments.length, (i) => '[v$i]').join();
+      filterParts.add('${concatInputs}concat=n=${allSegments.length}:v=1:a=0[outv]');
+      outputLabel = '[outv]';
+    } else {
+      // xfade chain — first concat segments WITHIN a clip (if any),
+      // then xfade between consecutive clips.
+      final clipVideoLabels = <String>[]; // label of each clip's final video stream
+      final clipDurationsSec = <double>[]; // each clip's final duration in the output timeline
+
+      int segIndex = 0;
+      for (int ci = 0; ci < clips.length; ci++) {
+        final clip = clips[ci];
+        final segs = clip.effectiveSegments;
+        final clipDuration = segs.fold<int>(0, (sum, s) => sum + s.durationMs) / 1000.0;
+        clipDurationsSec.add(clipDuration);
+
+        if (segs.length == 1) {
+          clipVideoLabels.add('[v$segIndex]');
+          segIndex += 1;
+        } else {
+          // Concat this clip's segments into [cN]
+          final inputs =
+              List.generate(segs.length, (i) => '[v${segIndex + i}]').join();
+          filterParts.add('${inputs}concat=n=${segs.length}:v=1:a=0[c$ci]');
+          clipVideoLabels.add('[c$ci]');
+          segIndex += segs.length;
+        }
+      }
+
+      // Now chain xfade between consecutive clip labels
+      String currentLabel = clipVideoLabels[0];
+      double cumulativeOffset = 0;
+
+      for (int ci = 0; ci < clips.length - 1; ci++) {
+        final transition = clips[ci].outgoingTransition;
+        final nextLabel = clipVideoLabels[ci + 1];
+        final outLabel = '[x$ci]';
+
+        // xfade requires a valid transition name — use fade with duration~0 for "none"
+        final xfadeName =
+            transition.isNone ? 'fade' : transition.type.xfadeName;
+        final durationSec =
+            transition.isNone ? 0.01 : transition.durationMs / 1000.0;
+
+        // Offset = cumulative length so far minus this transition's duration
+        cumulativeOffset += clipDurationsSec[ci] - durationSec;
+
+        filterParts.add(
+          '$currentLabel${nextLabel}xfade=transition=$xfadeName:duration=${durationSec.toStringAsFixed(3)}:offset=${cumulativeOffset.toStringAsFixed(3)}$outLabel',
+        );
+        currentLabel = outLabel;
+      }
+
+      outputLabel = currentLabel;
+    }
+
     final filterComplex = filterParts.join(';');
-    
-    // For audio: just take from first clip or disable
-    final audioArgs = settings.includeAudio 
-        ? '-map 0:a? -c:a aac -b:a 128k -ac 2' 
+
+    final audioArgs = settings.includeAudio
+        ? '-map 0:a? -c:a aac -b:a 128k -ac 2'
         : '-an';
-    
-    return '-y ${inputs}-filter_complex "$filterComplex" -map "[outv]" $audioArgs '
-           '-c:v libx264 -preset fast -crf ${quality.crf} '
-           '-movflags +faststart "$outputPath"';
+
+    return '-y ${inputs}-filter_complex "$filterComplex" -map "$outputLabel" $audioArgs '
+        '-c:v libx264 -preset fast -crf ${quality.crf} '
+        '-movflags +faststart "$outputPath"';
   }
 
   /// Get the exports directory
@@ -178,5 +236,6 @@ class ExportService {
 class _ExportSegment {
   final String path;
   final ClipTrim segment;
-  _ExportSegment(this.path, this.segment);
+  final int clipIndex;
+  _ExportSegment(this.path, this.segment, this.clipIndex);
 }

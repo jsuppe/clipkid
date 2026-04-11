@@ -18,6 +18,7 @@ import 'quick_edit_screen.dart';
 import 'music_picker_screen.dart';
 import 'pexels_browser_screen.dart';
 import 'text_editor_screen.dart';
+import 'transition_picker_screen.dart';
 
 /// Main editor screen
 class EditorScreen extends StatefulWidget {
@@ -310,6 +311,32 @@ class _EditorScreenState extends State<EditorScreen> {
           for (var i = 0; i < _choreography.clips.length; i++)
             if (i == clipIndex)
               _choreography.clips[i].copyWith(effects: newEffects)
+            else
+              _choreography.clips[i],
+        ],
+      );
+    });
+  }
+
+  /// Open the transition picker for the transition between clip[index]
+  /// and clip[index+1].
+  Future<void> _editTransition(int index) async {
+    if (index < 0 || index >= _choreography.clips.length - 1) return;
+    final fromClip = _choreography.clips[index];
+    final toClip = _choreography.clips[index + 1];
+    final result = await TransitionPickerSheet.show(
+      context,
+      current: fromClip.outgoingTransition,
+      fromClipName: fromClip.name ?? 'Clip ${index + 1}',
+      toClipName: toClip.name ?? 'Clip ${index + 2}',
+    );
+    if (result == null) return;
+    setState(() {
+      _choreography = _choreography.copyWith(
+        clips: [
+          for (var i = 0; i < _choreography.clips.length; i++)
+            if (i == index)
+              _choreography.clips[i].copyWith(outgoingTransition: result)
             else
               _choreography.clips[i],
         ],
@@ -1300,6 +1327,7 @@ class _EditorScreenState extends State<EditorScreen> {
               onSeek: _onSeek,
               onClipTap: _showClipOptions,
               onReorder: _reorderClips,
+              onTransitionTap: _editTransition,
               selectedClipIndex: _selectedClipIndex,
             ),
           ),

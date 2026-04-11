@@ -8,6 +8,8 @@ class TimelineView extends StatefulWidget {
   final ValueChanged<int>? onSeek;
   final ValueChanged<int>? onClipTap;
   final void Function(int oldIndex, int newIndex)? onReorder;
+  // Called when the transition dot between clip[index] and clip[index+1] is tapped.
+  final ValueChanged<int>? onTransitionTap;
   final int? selectedClipIndex;
 
   const TimelineView({
@@ -17,6 +19,7 @@ class TimelineView extends StatefulWidget {
     this.onSeek,
     this.onClipTap,
     this.onReorder,
+    this.onTransitionTap,
     this.selectedClipIndex,
   });
 
@@ -119,6 +122,8 @@ class _TimelineViewState extends State<TimelineView> {
                       children: _buildClipsRow(width, totalDuration),
                     ),
                   ),
+                  // Transition dots at clip boundaries
+                  ..._buildTransitionDots(width, totalDuration),
                   // Playhead (full height)
                   Positioned(
                     left: playheadPosition.clamp(0, width - 2),
@@ -187,6 +192,56 @@ class _TimelineViewState extends State<TimelineView> {
     }
 
     return Stack(children: ticks);
+  }
+
+  List<Widget> _buildTransitionDots(double width, int totalDuration) {
+    if (widget.choreography.clips.length < 2 || totalDuration <= 0) return [];
+    final dots = <Widget>[];
+    int cumulativeMs = 0;
+    for (int i = 0; i < widget.choreography.clips.length - 1; i++) {
+      cumulativeMs += widget.choreography.clips[i].durationMs;
+      final x = (cumulativeMs / totalDuration) * width;
+      final transition = widget.choreography.clips[i].outgoingTransition;
+      dots.add(
+        Positioned(
+          left: x - 14,
+          top: 18,
+          child: GestureDetector(
+            onTap: () => widget.onTransitionTap?.call(i),
+            behavior: HitTestBehavior.opaque,
+            child: Container(
+              width: 28,
+              height: 28,
+              decoration: BoxDecoration(
+                color: transition.isNone
+                    ? Colors.grey[800]
+                    : Colors.yellow.withValues(alpha: 0.9),
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: transition.isNone ? Colors.grey[600]! : Colors.yellow,
+                  width: 2,
+                ),
+                boxShadow: const [
+                  BoxShadow(color: Colors.black54, blurRadius: 4),
+                ],
+              ),
+              child: Center(
+                child: Text(
+                  transition.isNone ? '+' : transition.type.displayName.split(' ').last,
+                  style: TextStyle(
+                    color: transition.isNone ? Colors.grey[400] : Colors.black,
+                    fontSize: transition.isNone ? 20 : 14,
+                    fontWeight: FontWeight.bold,
+                    height: 1,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+    return dots;
   }
 
   List<Widget> _buildClipsRow(double width, int totalDuration) {

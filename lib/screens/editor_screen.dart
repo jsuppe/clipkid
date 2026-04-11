@@ -20,6 +20,7 @@ import 'pexels_browser_screen.dart';
 import 'text_editor_screen.dart';
 import 'transition_picker_screen.dart';
 import 'templates_gallery_screen.dart';
+import '../services/captions_service.dart';
 
 /// Main editor screen
 class EditorScreen extends StatefulWidget {
@@ -317,6 +318,77 @@ class _EditorScreenState extends State<EditorScreen> {
         ],
       );
     });
+  }
+
+  /// Run Whisper on a clip and add its transcription as caption overlays.
+  Future<void> _runAutoCaption(int index) async {
+    if (index < 0 || index >= _choreography.clips.length) return;
+    final clip = _choreography.clips[index];
+    final status = ValueNotifier<String>('Uploading video...');
+
+    // Show persistent progress dialog
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: Colors.grey[900],
+        title: const Text('Auto Caption 🎤',
+            style: TextStyle(color: Colors.white)),
+        content: ValueListenableBuilder<String>(
+          valueListenable: status,
+          builder: (ctx, msg, _) => Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const CircularProgressIndicator(),
+              const SizedBox(height: 16),
+              Text(msg, style: const TextStyle(color: Colors.white70)),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    try {
+      final captions = CaptionsService();
+      final segments = await captions.transcribe(
+        File(clip.playbackPath),
+        onProgress: (s) => status.value = s,
+      );
+      if (!mounted) return;
+      Navigator.pop(context); // dismiss progress dialog
+
+      if (segments.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No speech detected in this clip')),
+        );
+        return;
+      }
+
+      final overlays = CaptionsService.segmentsToOverlays(segments);
+      final newTextOverlays = [...clip.effects.textOverlays, ...overlays];
+      final newEffects = clip.effects.copyWith(textOverlays: newTextOverlays);
+      setState(() {
+        _choreography = _choreography.copyWith(
+          clips: [
+            for (var i = 0; i < _choreography.clips.length; i++)
+              if (i == index)
+                _choreography.clips[i].copyWith(effects: newEffects)
+              else
+                _choreography.clips[i],
+          ],
+        );
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Added ${segments.length} captions ✨')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.pop(context); // dismiss progress dialog
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Couldn\'t generate captions: $e')),
+      );
+    }
   }
 
   /// Open the Templates gallery. If the kid picks a template and fills it in,
@@ -675,6 +747,20 @@ class _EditorScreenState extends State<EditorScreen> {
               onTap: () {
                 Navigator.pop(context);
                 _openStyleTransfer(index);
+              },
+            ),
+
+            // Auto Captions option
+            ListTile(
+              leading: Icon(Icons.closed_caption, color: Colors.cyan[300]),
+              title: Text('Auto Caption 🎤', style: TextStyle(color: Colors.cyan[300])),
+              subtitle: Text(
+                'Listen to the video and add captions automatically',
+                style: TextStyle(color: Colors.grey[400]),
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                _runAutoCaption(index);
               },
             ),
             

@@ -235,9 +235,11 @@ class _TextEditorScreenState extends State<TextEditorScreen> {
                   ),
                   const SizedBox(height: 8),
 
-                  // Timing — 3 big buttons
+                  // Timing — 3 big buttons (customRange is for auto-captions, not shown here)
                   Row(
-                    children: OverlayTiming.values.map((t) {
+                    children: OverlayTiming.values
+                        .where((t) => t != OverlayTiming.customRange)
+                        .map((t) {
                       final selected = t == _timing;
                       return Expanded(
                         child: Padding(

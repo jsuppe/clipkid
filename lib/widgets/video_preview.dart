@@ -222,6 +222,10 @@ class VideoPreviewState extends State<VideoPreview> {
         return positionInClip <= 2000;
       case OverlayTiming.lastTwoSeconds:
         return positionInClip >= clip.durationMs - 2000;
+      case OverlayTiming.customRange:
+        final start = overlay.customStartMs ?? 0;
+        final end = overlay.customEndMs ?? clip.durationMs;
+        return positionInClip >= start && positionInClip <= end;
     }
   }
 

@@ -157,6 +157,13 @@ class ExportService {
             startSec = clipEnd - 2.0;
             endSec = clipEnd;
             break;
+          case OverlayTiming.customRange:
+            final startOffset = (overlay.customStartMs ?? 0) / 1000.0;
+            final endOffset =
+                (overlay.customEndMs ?? clip.durationMs) / 1000.0;
+            startSec = clipStart + startOffset;
+            endSec = clipStart + endOffset;
+            break;
         }
 
         final png = await OverlayRenderer.renderTextOverlayToPng(

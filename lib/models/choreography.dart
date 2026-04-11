@@ -174,7 +174,8 @@ enum TextStylePreset {
 enum OverlayTiming {
   wholeClip('Whole clip 🕐'),
   firstTwoSeconds('First 2 seconds ⏱️'),
-  lastTwoSeconds('Last 2 seconds ⏱️');
+  lastTwoSeconds('Last 2 seconds ⏱️'),
+  customRange('Custom range 🎯');
 
   final String displayName;
   const OverlayTiming(this.displayName);
@@ -188,6 +189,9 @@ class TextOverlay {
   final double y; // 0.0 - 1.0 (normalized position)
   final double scale; // 0.5 - 3.0 (relative size)
   final OverlayTiming timing;
+  // Used only when timing == customRange; milliseconds relative to clip start.
+  final int? customStartMs;
+  final int? customEndMs;
 
   TextOverlay({
     required this.text,
@@ -196,6 +200,8 @@ class TextOverlay {
     double? y,
     this.scale = 1.0,
     this.timing = OverlayTiming.wholeClip,
+    this.customStartMs,
+    this.customEndMs,
   })  : x = x ?? _defaultX(style),
         y = y ?? _defaultY(style);
 
@@ -219,6 +225,8 @@ class TextOverlay {
         'y': y,
         'scale': scale,
         'timing': timing.name,
+        if (customStartMs != null) 'customStartMs': customStartMs,
+        if (customEndMs != null) 'customEndMs': customEndMs,
       };
 
   factory TextOverlay.fromJson(Map<String, dynamic> json) => TextOverlay(
@@ -234,6 +242,8 @@ class TextOverlay {
           (t) => t.name == json['timing'],
           orElse: () => OverlayTiming.wholeClip,
         ),
+        customStartMs: json['customStartMs'] as int?,
+        customEndMs: json['customEndMs'] as int?,
       );
 
   TextOverlay copyWith({
@@ -243,6 +253,8 @@ class TextOverlay {
     double? y,
     double? scale,
     OverlayTiming? timing,
+    int? customStartMs,
+    int? customEndMs,
   }) =>
       TextOverlay(
         text: text ?? this.text,
@@ -251,6 +263,8 @@ class TextOverlay {
         y: y ?? this.y,
         scale: scale ?? this.scale,
         timing: timing ?? this.timing,
+        customStartMs: customStartMs ?? this.customStartMs,
+        customEndMs: customEndMs ?? this.customEndMs,
       );
 }
 

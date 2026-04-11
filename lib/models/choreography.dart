@@ -265,7 +265,7 @@ class ClipEffects {
   final List<StickerOverlay> stickers; // Emoji/sticker overlays
   final List<TextOverlay> textOverlays; // Text overlays
 
-  ClipEffects({
+  const ClipEffects({
     this.stabilize = false,
     this.stabilizeStrength,
     this.speed = 1.0,

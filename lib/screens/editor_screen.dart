@@ -19,6 +19,7 @@ import 'music_picker_screen.dart';
 import 'pexels_browser_screen.dart';
 import 'text_editor_screen.dart';
 import 'transition_picker_screen.dart';
+import 'templates_gallery_screen.dart';
 
 /// Main editor screen
 class EditorScreen extends StatefulWidget {
@@ -315,6 +316,49 @@ class _EditorScreenState extends State<EditorScreen> {
               _choreography.clips[i],
         ],
       );
+    });
+  }
+
+  /// Open the Templates gallery. If the kid picks a template and fills it in,
+  /// we replace the current choreography with the instantiated template.
+  /// If the current project has clips, we confirm first.
+  Future<void> _openTemplates() async {
+    if (_choreography.clips.isNotEmpty) {
+      final confirm = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: Colors.grey[900],
+          title: const Text('Start a new video?',
+              style: TextStyle(color: Colors.white)),
+          content: const Text(
+            'This will replace your current project. Make sure you saved it first!',
+            style: TextStyle(color: Colors.white70),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Keep editing'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Use a template'),
+            ),
+          ],
+        ),
+      );
+      if (confirm != true) return;
+    }
+
+    if (!mounted) return;
+    final newChoreography = await Navigator.push<Choreography?>(
+      context,
+      MaterialPageRoute(builder: (_) => const TemplatesGalleryScreen()),
+    );
+    if (newChoreography == null || !mounted) return;
+    setState(() {
+      _choreography = newChoreography;
+      _currentPositionMs = 0;
+      _selectedClipIndex = null;
     });
   }
 
@@ -1165,9 +1209,17 @@ class _EditorScreenState extends State<EditorScreen> {
           ),
         ),
         actions: [
+          // Templates button
+          IconButton(
+            icon: const Icon(Icons.auto_awesome),
+            onPressed: (_isLoading || _isProcessing || _isExporting)
+                ? null
+                : _openTemplates,
+            tooltip: 'Templates',
+          ),
           // Add Videos button
           IconButton(
-            icon: _isLoading 
+            icon: _isLoading
                 ? const SizedBox(
                     width: 20,
                     height: 20,

@@ -196,13 +196,41 @@ class _EditorScreenState extends State<EditorScreen> {
         });
       }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error capturing video: $e')),
-        );
-        setState(() {
-          _isLoading = false;
-        });
+      setState(() {
+        _isLoading = false;
+      });
+      if (!mounted) return;
+      // Camera not available (e.g., iOS simulator). Offer friendly fallback.
+      final isCameraMissing = e.toString().toLowerCase().contains('camera') ||
+          e.toString().toLowerCase().contains('not available');
+      final useGallery = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: Colors.grey[900],
+          title: Text(
+            isCameraMissing ? 'No camera here! 📷' : 'Hmm, something went wrong',
+            style: const TextStyle(color: Colors.white),
+          ),
+          content: Text(
+            isCameraMissing
+                ? "This device doesn't have a camera. Want to pick a video from the gallery instead?"
+                : 'Want to pick a video from your gallery instead?',
+            style: const TextStyle(color: Colors.white70),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('No thanks'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Open Gallery'),
+            ),
+          ],
+        ),
+      );
+      if (useGallery == true && mounted) {
+        _addVideosFromGallery();
       }
     }
   }

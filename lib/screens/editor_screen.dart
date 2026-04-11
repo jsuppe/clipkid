@@ -21,6 +21,7 @@ import 'text_editor_screen.dart';
 import 'transition_picker_screen.dart';
 import 'templates_gallery_screen.dart';
 import '../services/captions_service.dart';
+import '../services/background_removal_service.dart';
 
 /// Main editor screen
 class EditorScreen extends StatefulWidget {
@@ -318,6 +319,125 @@ class _EditorScreenState extends State<EditorScreen> {
         ],
       );
     });
+  }
+
+  /// Run AI background removal on a clip. First asks which color to use
+  /// for the new background, then uploads and processes.
+  Future<void> _runBackgroundRemoval(int index) async {
+    if (index < 0 || index >= _choreography.clips.length) return;
+
+    // Pick a background color
+    const colors = [
+      ('#00FF00', 'Green Screen 🟢', Color(0xFF00FF00)),
+      ('#0000FF', 'Blue 🔵', Color(0xFF0000FF)),
+      ('#FFFFFF', 'White ⚪', Color(0xFFFFFFFF)),
+      ('#000000', 'Black ⚫', Color(0xFF000000)),
+      ('#FF00FF', 'Magic Pink 💗', Color(0xFFFF00FF)),
+      ('#FFD700', 'Gold 🟡', Color(0xFFFFD700)),
+    ];
+
+    final chosen = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: Colors.grey[900],
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 12),
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey[600],
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Text('Pick a new background',
+                style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+            const Text('Your face & body will be on top',
+                style: TextStyle(color: Colors.white70, fontSize: 13)),
+            const SizedBox(height: 12),
+            for (final c in colors)
+              ListTile(
+                leading: Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: c.$3,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white30, width: 2),
+                  ),
+                ),
+                title: Text(c.$2, style: const TextStyle(color: Colors.white, fontSize: 16)),
+                onTap: () => Navigator.pop(ctx, c.$1),
+              ),
+            const SizedBox(height: 12),
+          ],
+        ),
+      ),
+    );
+    if (chosen == null || !mounted) return;
+
+    final status = ValueNotifier<String>('Uploading...');
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: Colors.grey[900],
+        title: const Text('Removing background 🪄',
+            style: TextStyle(color: Colors.white)),
+        content: ValueListenableBuilder<String>(
+          valueListenable: status,
+          builder: (ctx, msg, _) => Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const CircularProgressIndicator(),
+              const SizedBox(height: 16),
+              Text(msg, style: const TextStyle(color: Colors.white70)),
+              const SizedBox(height: 8),
+              const Text('(this can take a minute)',
+                  style: TextStyle(color: Colors.white38, fontSize: 11)),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    try {
+      final clip = _choreography.clips[index];
+      final service = BackgroundRemovalService();
+      final outPath = await service.removeBackground(
+        File(clip.path),
+        backgroundColorHex: chosen,
+        onProgress: (s) => status.value = s,
+      );
+
+      if (!mounted) return;
+      Navigator.pop(context); // dismiss progress dialog
+
+      setState(() {
+        _choreography = _choreography.copyWith(
+          clips: [
+            for (var i = 0; i < _choreography.clips.length; i++)
+              if (i == index)
+                _choreography.clips[i].copyWith(processedPath: outPath)
+              else
+                _choreography.clips[i],
+          ],
+        );
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Background removed ✨')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Background removal failed: $e')),
+      );
+    }
   }
 
   /// Open a picker to set the freeze-frame duration on a clip.
@@ -843,6 +963,21 @@ class _EditorScreenState extends State<EditorScreen> {
               onTap: () {
                 Navigator.pop(context);
                 _pickFreezeDuration(index);
+              },
+            ),
+
+            // Background Removal option
+            ListTile(
+              leading: Icon(Icons.person_outline, color: Colors.green[300]),
+              title: Text('Remove Background 🪄',
+                  style: TextStyle(color: Colors.green[300])),
+              subtitle: Text(
+                'Use AI to put yourself on a new background',
+                style: TextStyle(color: Colors.grey[400]),
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                _runBackgroundRemoval(index);
               },
             ),
             

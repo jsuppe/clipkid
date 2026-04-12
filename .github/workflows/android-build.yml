@@ -8,8 +8,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
-    name: Build Android APK
+  build-debug:
+    name: Build debug APKs (split per ABI)
     runs-on: ubuntu-latest
 
     steps:
@@ -48,12 +48,110 @@ jobs:
       - name: Test
         run: flutter test
 
-      - name: Build debug APK
-        run: flutter build apk --debug
+      - name: Build debug APKs (split per ABI)
+        run: flutter build apk --debug --split-per-abi
 
-      - name: Upload debug APK
+      - name: Upload debug APKs
         uses: actions/upload-artifact@v4
         with:
-          name: clipkid-debug-apk
-          path: build/app/outputs/flutter-apk/app-debug.apk
+          name: clipkid-debug-apks
+          path: build/app/outputs/flutter-apk/app-*-debug.apk
+          if-no-files-found: error
+
+  build-release:
+    name: Build release APKs (signed)
+    runs-on: ubuntu-latest
+    # Only run if the release keystore secret is configured.
+    # Skipped automatically on forks / PRs where secrets aren't available.
+    if: ${{ github.event_name != 'pull_request' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check for signing secrets
+        id: signing
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "have_secrets=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "have_secrets=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::ANDROID_KEYSTORE_BASE64 secret not set — skipping release build."
+          fi
+
+      - name: Set up JDK 17
+        if: steps.signing.outputs.have_secrets == 'true'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Flutter
+        if: steps.signing.outputs.have_secrets == 'true'
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Create placeholder shorebird.yaml
+        if: steps.signing.outputs.have_secrets == 'true'
+        run: |
+          if [ ! -f shorebird.yaml ]; then
+            echo "app_id: ci-placeholder" > shorebird.yaml
+          fi
+
+      - name: Decode keystore
+        if: steps.signing.outputs.have_secrets == 'true'
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          echo "$KEYSTORE_B64" | base64 -d > android/app/release.keystore
+
+      - name: Create key.properties
+        if: steps.signing.outputs.have_secrets == 'true'
+        env:
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+        run: |
+          cat > android/key.properties <<EOF
+          storeFile=app/release.keystore
+          storePassword=$STORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEY_PASSWORD
+          EOF
+
+      - name: Install dependencies
+        if: steps.signing.outputs.have_secrets == 'true'
+        run: flutter pub get
+
+      - name: Build release APKs (split per ABI)
+        if: steps.signing.outputs.have_secrets == 'true'
+        run: flutter build apk --release --split-per-abi
+
+      - name: Build release App Bundle
+        if: steps.signing.outputs.have_secrets == 'true'
+        run: flutter build appbundle --release
+
+      - name: Clean up signing material
+        if: always()
+        run: |
+          rm -f android/key.properties android/app/release.keystore
+
+      - name: Upload release APKs
+        if: steps.signing.outputs.have_secrets == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: clipkid-release-apks
+          path: build/app/outputs/flutter-apk/app-*-release.apk
+          if-no-files-found: error
+
+      - name: Upload release AAB
+        if: steps.signing.outputs.have_secrets == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: clipkid-release-aab
+          path: build/app/outputs/bundle/release/app-release.aab
           if-no-files-found: error

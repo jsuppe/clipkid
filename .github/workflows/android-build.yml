@@ -155,3 +155,75 @@ jobs:
           name: clipkid-release-aab
           path: build/app/outputs/bundle/release/app-release.aab
           if-no-files-found: error
+
+  publish-release:
+    name: Publish rolling GitHub Release
+    needs: [build-debug, build-release]
+    # Run on master pushes and manual dispatch; even if build-release was skipped.
+    if: |
+      always() &&
+      needs.build-debug.result == 'success' &&
+      (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download debug APKs
+        uses: actions/download-artifact@v4
+        with:
+          name: clipkid-debug-apks
+          path: artifacts/debug
+
+      - name: Download release APKs (if built)
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: clipkid-release-apks
+          path: artifacts/release
+
+      - name: Download release AAB (if built)
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: clipkid-release-aab
+          path: artifacts/release
+
+      - name: Stage files for release
+        run: |
+          mkdir -p release-assets
+          # Debug APKs — keep original names (app-<abi>-debug.apk)
+          cp artifacts/debug/*.apk release-assets/ 2>/dev/null || true
+          # Release APKs/AAB if present
+          cp artifacts/release/*.apk release-assets/ 2>/dev/null || true
+          cp artifacts/release/*.aab release-assets/ 2>/dev/null || true
+          ls -la release-assets/
+
+      - name: Delete existing master-latest tag (so it moves to the new commit)
+        run: |
+          git push --delete origin master-latest || true
+          git tag -d master-latest || true
+
+      - name: Publish / update rolling release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: master-latest
+          name: "Latest build (master)"
+          body: |
+            Rolling build from the latest commit on `master`.
+
+            - Commit: ${{ github.sha }}
+            - Built: ${{ github.event.head_commit.timestamp }}
+
+            ## Install
+            Download the APK matching your device's CPU architecture (most modern phones are **arm64-v8a**), tap the file on your phone, and install.
+
+            Debug APKs are signed with Android's shared debug key (fine for sideloading, not for Play Store).
+            Release APKs/AAB are only attached when signing secrets are configured.
+          prerelease: true
+          make_latest: false
+          files: release-assets/*
+          fail_on_unmatched_files: true

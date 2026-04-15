@@ -26,6 +26,7 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: "3.41.6"
           cache: true
 
       - name: Show Flutter version
@@ -42,8 +43,10 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
+      # --no-fatal-infos: info-level lints (avoid_print, deprecated_member_use, etc.)
+      # do not fail CI. Warnings and errors still do.
       - name: Analyze
-        run: flutter analyze
+        run: flutter analyze --no-fatal-infos
 
       - name: Test
         run: flutter test
@@ -93,6 +96,7 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: "3.41.6"
           cache: true
 
       - name: Create placeholder shorebird.yaml

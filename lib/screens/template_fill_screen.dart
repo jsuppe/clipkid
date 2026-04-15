@@ -1,6 +1,4 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
-import '../models/choreography.dart';
 import '../models/template.dart';
 import '../services/project_service.dart';
 import 'pexels_browser_screen.dart';

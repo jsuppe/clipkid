@@ -261,7 +261,6 @@ class _TimelineViewState extends State<TimelineView> {
 
   Widget _buildDraggableClip(int index, Clip clip, double clipWidth) {
     final isSelected = widget.selectedClipIndex == index;
-    final isDragging = _draggedIndex == index;
 
     return LongPressDraggable<int>(
       data: index,

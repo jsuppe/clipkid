@@ -28,7 +28,6 @@ class TimelineView extends StatefulWidget {
 }
 
 class _TimelineViewState extends State<TimelineView> {
-  int? _draggedIndex;
   int? _hoverTargetIndex;
 
   // Fixed color palette for clips - visually distinct colors
@@ -265,13 +264,10 @@ class _TimelineViewState extends State<TimelineView> {
     return LongPressDraggable<int>(
       data: index,
       delay: const Duration(milliseconds: 200),
-      onDragStarted: () => setState(() => _draggedIndex = index),
       onDragEnd: (_) => setState(() {
-        _draggedIndex = null;
         _hoverTargetIndex = null;
       }),
       onDraggableCanceled: (_, __) => setState(() {
-        _draggedIndex = null;
         _hoverTargetIndex = null;
       }),
       feedback: Material(

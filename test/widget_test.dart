@@ -4,6 +4,8 @@ import 'package:clipkid/main.dart';
 void main() {
   testWidgets('App launches', (WidgetTester tester) async {
     await tester.pumpWidget(const ClipKidApp());
-    expect(find.text('ClipKid'), findsOneWidget);
+    // Allow the post-frame callback that offers the duck guide to run.
+    await tester.pump();
+    expect(find.byType(ClipKidApp), findsOneWidget);
   });
 }

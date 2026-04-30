@@ -103,6 +103,116 @@ class StickerOverlay {
   );
 }
 
+/// A sound effect placed at a specific time in a clip.
+class SoundEffectOverlay {
+  final String effectId; // key into kSoundEffects
+  final int startMs; // when to play (relative to clip start)
+  final double volume; // 0.0 - 1.0
+
+  SoundEffectOverlay({
+    required this.effectId,
+    required this.startMs,
+    this.volume = 1.0,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'effectId': effectId,
+    'startMs': startMs,
+    'volume': volume,
+  };
+
+  factory SoundEffectOverlay.fromJson(Map<String, dynamic> json) =>
+      SoundEffectOverlay(
+        effectId: json['effectId'] as String,
+        startMs: json['startMs'] as int? ?? 0,
+        volume: (json['volume'] as num?)?.toDouble() ?? 1.0,
+      );
+
+  SoundEffectOverlay copyWith({String? effectId, int? startMs, double? volume}) =>
+      SoundEffectOverlay(
+        effectId: effectId ?? this.effectId,
+        startMs: startMs ?? this.startMs,
+        volume: volume ?? this.volume,
+      );
+}
+
+/// Voice effect preset applied to clip audio during export.
+enum VoiceEffect {
+  none('None', '', ''),
+  robot('Robot 🤖', 'asetrate=22050,atempo=2.0,aformat=sample_fmts=fltp', 'Metallic and mechanical'),
+  chipmunk('Chipmunk 🐿️', 'asetrate=65100,atempo=0.675,aformat=sample_fmts=fltp', 'High-pitched and fast'),
+  deep('Deep 🎸', 'asetrate=32000,atempo=1.378,aformat=sample_fmts=fltp', 'Low and booming'),
+  echo('Echo 🏔️', 'aecho=0.8:0.88:60:0.4', 'Reverberating echo'),
+  alien('Alien 👽', 'vibrato=f=7:d=0.5,aecho=0.8:0.7:40:0.3', 'Wobbly and otherworldly');
+
+  final String displayName;
+  final String ffmpegFilter;
+  final String description;
+  const VoiceEffect(this.displayName, this.ffmpegFilter, this.description);
+}
+
+/// Speed ramp preset — variable speed within a clip.
+enum SpeedRamp {
+  none('None', 'No speed change'),
+  slowStart('Slow Start 🐢➡️🐇', 'Starts slow, speeds up to normal'),
+  slowEnd('Slow End 🐇➡️🐢', 'Normal speed, slows at the end'),
+  speedBurst('Speed Burst ⚡', 'Slow → fast → slow'),
+  dramaticSlowmo('Dramatic Slowmo 🎭', 'Normal → super slow → normal');
+
+  final String displayName;
+  final String description;
+  const SpeedRamp(this.displayName, this.description);
+}
+
+/// Chroma key (green screen) settings.
+class ChromaKeySettings {
+  final double hue; // 0-360 (120 = green, 240 = blue)
+  final double similarity; // 0.0-1.0 (how close to target color)
+  final double blend; // 0.0-1.0 (edge smoothing)
+  final String? backgroundPath; // null = transparent/black
+
+  const ChromaKeySettings({
+    this.hue = 120, // green by default
+    this.similarity = 0.3,
+    this.blend = 0.1,
+    this.backgroundPath,
+  });
+
+  String get ffmpegFilter =>
+      'chromakey=0x${_hueToHex(hue)}:${similarity.toStringAsFixed(2)}:${blend.toStringAsFixed(2)}';
+
+  static String _hueToHex(double hue) {
+    // Convert HSL hue to hex color for ffmpeg chromakey
+    if (hue >= 100 && hue <= 140) return '00FF00'; // green
+    if (hue >= 220 && hue <= 260) return '0000FF'; // blue
+    if (hue >= 340 || hue <= 20) return 'FF0000'; // red
+    return '00FF00'; // default green
+  }
+
+  Map<String, dynamic> toJson() => {
+    'hue': hue,
+    'similarity': similarity,
+    'blend': blend,
+    if (backgroundPath != null) 'backgroundPath': backgroundPath,
+  };
+
+  factory ChromaKeySettings.fromJson(Map<String, dynamic> json) =>
+      ChromaKeySettings(
+        hue: (json['hue'] as num?)?.toDouble() ?? 120,
+        similarity: (json['similarity'] as num?)?.toDouble() ?? 0.3,
+        blend: (json['blend'] as num?)?.toDouble() ?? 0.1,
+        backgroundPath: json['backgroundPath'] as String?,
+      );
+
+  ChromaKeySettings copyWith({double? hue, double? similarity, double? blend, String? backgroundPath}) =>
+      ChromaKeySettings(
+        hue: hue ?? this.hue,
+        similarity: similarity ?? this.similarity,
+        blend: blend ?? this.blend,
+        backgroundPath: backgroundPath ?? this.backgroundPath,
+      );
+}
+
 /// Transition between two consecutive clips.
 /// Each preset maps to an ffmpeg xfade transition name.
 enum TransitionType {
@@ -293,6 +403,10 @@ class ClipEffects {
   final String? backgroundRemovalPath; // Path to bg-removed clip if processed
   final String? pipPath; // Path to a clip that should play as Picture-in-Picture
   final PipPosition pipPosition;
+  final List<SoundEffectOverlay> soundEffects; // Sound effects on timeline
+  final VoiceEffect voiceEffect; // Voice changer preset
+  final SpeedRamp speedRamp; // Speed ramp preset
+  final ChromaKeySettings? chromaKey; // Green screen / chroma key
 
   const ClipEffects({
     this.stabilize = false,
@@ -308,6 +422,10 @@ class ClipEffects {
     this.backgroundRemovalPath,
     this.pipPath,
     this.pipPosition = PipPosition.bottomRight,
+    this.soundEffects = const [],
+    this.voiceEffect = VoiceEffect.none,
+    this.speedRamp = SpeedRamp.none,
+    this.chromaKey,
   });
 
   Map<String, dynamic> toJson() => {
@@ -324,6 +442,10 @@ class ClipEffects {
         if (backgroundRemovalPath != null) 'backgroundRemovalPath': backgroundRemovalPath,
         if (pipPath != null) 'pipPath': pipPath,
         if (pipPath != null) 'pipPosition': pipPosition.name,
+        if (soundEffects.isNotEmpty) 'soundEffects': soundEffects.map((s) => s.toJson()).toList(),
+        if (voiceEffect != VoiceEffect.none) 'voiceEffect': voiceEffect.name,
+        if (speedRamp != SpeedRamp.none) 'speedRamp': speedRamp.name,
+        if (chromaKey != null) 'chromaKey': chromaKey!.toJson(),
       };
 
   factory ClipEffects.fromJson(Map<String, dynamic>? json) {
@@ -352,6 +474,20 @@ class ClipEffects {
         (p) => p.name == json['pipPosition'],
         orElse: () => PipPosition.bottomRight,
       ),
+      soundEffects: (json['soundEffects'] as List<dynamic>?)
+          ?.map((s) => SoundEffectOverlay.fromJson(s as Map<String, dynamic>))
+          .toList() ?? [],
+      voiceEffect: VoiceEffect.values.firstWhere(
+        (v) => v.name == json['voiceEffect'],
+        orElse: () => VoiceEffect.none,
+      ),
+      speedRamp: SpeedRamp.values.firstWhere(
+        (r) => r.name == json['speedRamp'],
+        orElse: () => SpeedRamp.none,
+      ),
+      chromaKey: json['chromaKey'] != null
+          ? ChromaKeySettings.fromJson(json['chromaKey'] as Map<String, dynamic>)
+          : null,
     );
   }
 
@@ -369,6 +505,10 @@ class ClipEffects {
     String? backgroundRemovalPath,
     String? pipPath,
     PipPosition? pipPosition,
+    List<SoundEffectOverlay>? soundEffects,
+    VoiceEffect? voiceEffect,
+    SpeedRamp? speedRamp,
+    ChromaKeySettings? chromaKey,
   }) =>
       ClipEffects(
         stabilize: stabilize ?? this.stabilize,
@@ -384,6 +524,10 @@ class ClipEffects {
         backgroundRemovalPath: backgroundRemovalPath ?? this.backgroundRemovalPath,
         pipPath: pipPath ?? this.pipPath,
         pipPosition: pipPosition ?? this.pipPosition,
+        soundEffects: soundEffects ?? this.soundEffects,
+        voiceEffect: voiceEffect ?? this.voiceEffect,
+        speedRamp: speedRamp ?? this.speedRamp,
+        chromaKey: chromaKey ?? this.chromaKey,
       );
 }
 

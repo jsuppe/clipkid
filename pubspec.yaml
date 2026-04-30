@@ -65,12 +65,22 @@ dependencies:
   # Audio playback for sound effect previews
   audioplayers: ^6.1.0
 
+  # Camera for in-app guided capture flow
+  camera: ^0.11.0
+
+  # Persist onboarding + achievement state
+  shared_preferences: ^2.3.0
+
   # FFmpeg for video processing (stabilization, etc.)
-  # Using dart-technologies fork with arm64 simulator support for iOS 26
+  # Using dart-technologies fork master (v4.1.0+): bundles Android AAR natively
+  # (the old arm64-simulator-support branch depended on pub.dev ffmpeg_kit_flutter_android
+  # 1.7.0, whose Arthenica AARs were retired and no longer resolve).
+  # iOS arm64 simulator is re-enabled via a Podfile post_install hook that strips
+  # arm64 from EXCLUDED_ARCHS for the ffmpeg_kit_flutter_new pod.
   ffmpeg_kit_flutter_new:
     git:
       url: https://github.com/dart-technologies/ffmpeg_kit_flutter.git
-      ref: arm64-simulator-support
+      ref: master
 
 dev_dependencies:
   flutter_test:
@@ -106,6 +116,8 @@ flutter:
   uses-material-design: true
   assets:
     - shorebird.yaml
+    - assets/sounds/
+    - assets/music/
 
   # To add assets to your application, add an assets section, like this:
   # assets:

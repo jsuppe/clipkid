@@ -39,5 +39,14 @@ end
 post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
+
+    # ffmpeg_kit_flutter_new master (v4.1.0) podspec excludes arm64 from the
+    # iphonesimulator SDK, which breaks running on Apple Silicon simulators.
+    # Strip that exclusion so the app runs on arm64 iOS simulators again.
+    if target.name == 'ffmpeg_kit_flutter_new'
+      target.build_configurations.each do |config|
+        config.build_settings['EXCLUDED_ARCHS[sdk=iphonesimulator*]'] = 'i386'
+      end
+    end
   end
 end

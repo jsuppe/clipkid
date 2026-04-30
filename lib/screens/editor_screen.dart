@@ -9,7 +9,7 @@ import '../services/project_service.dart';
 import '../services/video_processor.dart';
 import '../services/export_service.dart';
 import '../widgets/timeline_view.dart';
-import '../widgets/video_preview.dart';
+import '../rendering/scene_renderer.dart';
 import '../widgets/duck_guide_overlay.dart';
 import 'trim_screen.dart';
 import 'export_dialog.dart';
@@ -22,17 +22,26 @@ import 'transition_picker_screen.dart';
 import 'templates_gallery_screen.dart';
 import '../services/captions_service.dart';
 import '../services/background_removal_service.dart';
+import '../services/achievement_service.dart';
+import 'sound_effects_screen.dart';
+import 'voice_changer_screen.dart';
+import 'speed_ramp_screen.dart';
+import 'green_screen_screen.dart';
+import 'reaction_capture_screen.dart';
+import 'achievements_screen.dart';
 
 /// Main editor screen
 class EditorScreen extends StatefulWidget {
-  const EditorScreen({super.key});
+  final Choreography? initialChoreography;
+  const EditorScreen({super.key, this.initialChoreography});
 
   @override
   State<EditorScreen> createState() => _EditorScreenState();
 }
 
 class _EditorScreenState extends State<EditorScreen> {
-  Choreography _choreography = Choreography.empty(name: 'New Project');
+  late Choreography _choreography =
+      widget.initialChoreography ?? Choreography.empty(name: 'New Project');
   int _currentPositionMs = 0;
   int? _seekToMs;
   bool _isLoading = false;
@@ -43,7 +52,7 @@ class _EditorScreenState extends State<EditorScreen> {
   double _exportProgress = 0.0;
   String _exportStatus = '';
   int? _selectedClipIndex;
-  final GlobalKey<VideoPreviewState> _previewKey = GlobalKey();
+  final GlobalKey<SceneRendererState> _previewKey = GlobalKey();
   
   // Duck guide for interactive tutorial
   final DuckGuide _duckGuide = DuckGuide();
@@ -1168,6 +1177,86 @@ class _EditorScreenState extends State<EditorScreen> {
               },
             ),
             
+            // Sound Effects
+            ListTile(
+              leading: Icon(Icons.volume_up, color: Colors.orange[300]),
+              title: Text('Sound Effects 🔊', style: TextStyle(color: Colors.orange[300])),
+              subtitle: Text(
+                clip.effects.soundEffects.isEmpty
+                    ? 'Add whoosh, boing, applause...'
+                    : '${clip.effects.soundEffects.length} effect(s) added',
+                style: TextStyle(color: Colors.grey[400]),
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                _openSoundEffects(index);
+              },
+            ),
+
+            // Voice Changer
+            ListTile(
+              leading: Icon(Icons.record_voice_over, color: Colors.indigo[300]),
+              title: Text('Voice Changer 🎤', style: TextStyle(color: Colors.indigo[300])),
+              subtitle: Text(
+                clip.effects.voiceEffect != VoiceEffect.none
+                    ? clip.effects.voiceEffect.displayName
+                    : 'Robot, chipmunk, echo...',
+                style: TextStyle(color: Colors.grey[400]),
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                _openVoiceChanger(index);
+              },
+            ),
+
+            // Speed Ramp
+            ListTile(
+              leading: Icon(Icons.speed, color: Colors.deepOrange[300]),
+              title: Text('Speed Ramp ⚡', style: TextStyle(color: Colors.deepOrange[300])),
+              subtitle: Text(
+                clip.effects.speedRamp != SpeedRamp.none
+                    ? clip.effects.speedRamp.displayName
+                    : 'Variable speed: slow-mo, speed burst...',
+                style: TextStyle(color: Colors.grey[400]),
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                _openSpeedRamp(index);
+              },
+            ),
+
+            // Green Screen
+            ListTile(
+              leading: Icon(Icons.wallpaper, color: Colors.green[400]),
+              title: Text('Green Screen 🟩', style: TextStyle(color: Colors.green[400])),
+              subtitle: Text(
+                clip.effects.chromaKey != null
+                    ? 'Chroma key active'
+                    : 'Remove a background color',
+                style: TextStyle(color: Colors.grey[400]),
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                _openGreenScreen(index);
+              },
+            ),
+
+            // Reaction Mode
+            ListTile(
+              leading: Icon(Icons.emoji_emotions, color: Colors.yellow[300]),
+              title: Text('React to This 😮', style: TextStyle(color: Colors.yellow[300])),
+              subtitle: Text(
+                'Film yourself watching this clip',
+                style: TextStyle(color: Colors.grey[400]),
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                _openReaction(index);
+              },
+            ),
+
+            const Divider(color: Colors.grey),
+
             // Delete option
             ListTile(
               leading: Icon(Icons.delete, color: Colors.red[300]),
@@ -1191,6 +1280,78 @@ class _EditorScreenState extends State<EditorScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _openSoundEffects(int index) async {
+    final clip = _choreography.clips[index];
+    final result = await Navigator.push<SoundEffectOverlay>(
+      context,
+      MaterialPageRoute(builder: (_) => SoundEffectsScreen(
+        currentPositionMs: _currentPositionMs,
+        clipStartMs: clip.startMs,
+      )),
+    );
+    if (result == null || !mounted) return;
+    final newEffects = List<SoundEffectOverlay>.from(clip.effects.soundEffects)..add(result);
+    _updateClipEffects(index, clip.effects.copyWith(soundEffects: newEffects));
+    AchievementService.recordEvent('sound_effects_added');
+  }
+
+  Future<void> _openVoiceChanger(int index) async {
+    final clip = _choreography.clips[index];
+    final result = await Navigator.push<VoiceEffect>(
+      context,
+      MaterialPageRoute(builder: (_) => VoiceChangerScreen(current: clip.effects.voiceEffect)),
+    );
+    if (result == null || !mounted) return;
+    _updateClipEffects(index, clip.effects.copyWith(voiceEffect: result));
+    if (result != VoiceEffect.none) AchievementService.recordEvent('voice_changer_used');
+  }
+
+  Future<void> _openSpeedRamp(int index) async {
+    final clip = _choreography.clips[index];
+    final result = await Navigator.push<SpeedRamp>(
+      context,
+      MaterialPageRoute(builder: (_) => SpeedRampScreen(current: clip.effects.speedRamp)),
+    );
+    if (result == null || !mounted) return;
+    _updateClipEffects(index, clip.effects.copyWith(speedRamp: result));
+    if (result != SpeedRamp.none) AchievementService.recordEvent('speed_ramp_used');
+  }
+
+  Future<void> _openGreenScreen(int index) async {
+    final clip = _choreography.clips[index];
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => GreenScreenScreen(current: clip.effects.chromaKey)),
+    );
+    if (result == null || !mounted) return;
+    if (result == 'disabled') {
+      _updateClipEffects(index, clip.effects.copyWith()); // TODO: need nullable chromaKey
+    } else if (result is ChromaKeySettings) {
+      _updateClipEffects(index, clip.effects.copyWith(chromaKey: result));
+      AchievementService.recordEvent('green_screen_used');
+    }
+  }
+
+  Future<void> _openReaction(int index) async {
+    final clip = _choreography.clips[index];
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => ReactionCaptureScreen(
+        sourceVideoPath: clip.playbackPath,
+        sourceVideoName: clip.name,
+      )),
+    );
+    AchievementService.recordEvent('reactions_created');
+  }
+
+  void _updateClipEffects(int index, ClipEffects newEffects) {
+    final clips = List<Clip>.from(_choreography.clips);
+    clips[index] = clips[index].copyWith(effects: newEffects);
+    setState(() {
+      _choreography = _choreography.copyWith(clips: clips);
+    });
   }
 
   Future<void> _openTrimEditor(int index) async {
@@ -1748,6 +1909,15 @@ class _EditorScreenState extends State<EditorScreen> {
                 : _exportVideo,
             tooltip: 'Export Video',
           ),
+          // Achievements button
+          IconButton(
+            icon: const Icon(Icons.emoji_events),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const AchievementsScreen()),
+            ),
+            tooltip: 'Badges',
+          ),
           // Save button
           IconButton(
             icon: const Icon(Icons.save),
@@ -1764,7 +1934,7 @@ class _EditorScreenState extends State<EditorScreen> {
               // Preview area
               Expanded(
                 flex: 3,
-                child: VideoPreview(
+                child: SceneRenderer(
                   key: _previewKey,
                   choreography: _choreography,
                   onPositionChanged: _onPositionChanged,

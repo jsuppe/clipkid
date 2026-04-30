@@ -10,14 +10,28 @@ class ProjectService {
   static const _uuid = Uuid();
   static final _picker = ImagePicker();
 
-  /// Pick multiple video files from device gallery
-  /// Uses image_picker (native Android photo picker)
+  static const _videoExtensions = {
+    '.mp4', '.mov', '.avi', '.mkv', '.webm', '.m4v', '.3gp', '.ts',
+  };
+
+  /// Pick a video file from device gallery.
+  /// Validates the picked file is actually a video before returning.
   static Future<List<File>?> pickVideos() async {
-    // Use pickVideo instead of pickMultipleMedia for better compatibility
     final result = await _picker.pickVideo(source: ImageSource.gallery);
-    
     if (result == null) return null;
-    
+
+    final ext = result.path.toLowerCase().split('.').last;
+    if (!_videoExtensions.contains('.$ext')) {
+      // Not a video file — try to validate via VideoPlayerController
+      try {
+        final controller = VideoPlayerController.file(File(result.path));
+        await controller.initialize();
+        await controller.dispose();
+      } catch (_) {
+        return null; // Can't play as video — reject
+      }
+    }
+
     return [File(result.path)];
   }
 

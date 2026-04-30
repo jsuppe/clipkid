@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/return_code.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:path_provider/path_provider.dart';
 import '../models/choreography.dart';
 import '../screens/export_dialog.dart';
@@ -70,6 +71,18 @@ class ExportService {
     // Render text overlays to PNG files (WYSIWYG with preview)
     final overlayJobs = await _prepareOverlayJobs(choreography, exportSettings);
 
+    // Pre-extract sound effect assets to temp files for ffmpeg
+    final sfxPaths = <String, String>{};
+    for (final clip in choreography.clips) {
+      for (final sfx in clip.effects.soundEffects) {
+        if (!sfxPaths.containsKey(sfx.effectId)) {
+          try {
+            sfxPaths[sfx.effectId] = await _extractAssetToTemp('sounds/${sfx.effectId}.wav');
+          } catch (_) {} // skip missing effects
+        }
+      }
+    }
+
     try {
       // Build FFmpeg command
       final command = _buildExportCommand(
@@ -77,6 +90,7 @@ class ExportService {
         outputPath,
         exportSettings,
         overlayJobs,
+        sfxPaths: sfxPaths,
       );
       print('=== EXPORT COMMAND ===');
       print(command);
@@ -193,8 +207,9 @@ class ExportService {
     Choreography choreography,
     String outputPath,
     ExportSettings settings,
-    List<_OverlayExportJob> overlayJobs,
-  ) {
+    List<_OverlayExportJob> overlayJobs, {
+    Map<String, String> sfxPaths = const {},
+  }) {
     final clips = choreography.clips;
     final quality = settings.quality;
 
@@ -227,11 +242,15 @@ class ExportService {
 
     for (int i = 0; i < allSegments.length; i++) {
       final seg = allSegments[i];
+      final clip = clips[seg.clipIndex];
       final inSec = seg.segment.inPointMs / 1000.0;
       final duration = seg.segment.durationMs / 1000.0;
       inputs.write('-ss $inSec -t $duration -i "${seg.path}" ');
+
+      // Base video filter: scale + pad + per-clip effects (chroma key, color filter, speed ramp)
+      final extraVideoFilters = _clipVideoFilters(clip);
       filterParts.add(
-        '[$i:v]scale=${quality.width}:${quality.height}:force_original_aspect_ratio=decrease,pad=${quality.width}:${quality.height}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p,fps=30[v$i]',
+        '[$i:v]scale=${quality.width}:${quality.height}:force_original_aspect_ratio=decrease,pad=${quality.width}:${quality.height}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p,fps=30${extraVideoFilters}[v$i]',
       );
     }
 
@@ -412,13 +431,100 @@ class ExportService {
       outputLabel = current;
     }
 
+    // Build audio: per-clip voice/speed filters, concat, mix in sound effects
+    String audioMapping;
+    if (!settings.includeAudio) {
+      audioMapping = '-an';
+    } else {
+      // Compute output-timeline start for each clip (for sound effect timing)
+      final clipOutputStarts = <double>[];
+      double audioCursor = 0;
+      for (int ci = 0; ci < clips.length; ci++) {
+        clipOutputStarts.add(audioCursor);
+        final dur = clips[ci].durationMs / 1000.0;
+        final transSec = clips[ci].outgoingTransition.isNone
+            ? 0.0
+            : clips[ci].outgoingTransition.durationMs / 1000.0;
+        audioCursor += dur - transSec;
+      }
+
+      // Collect all sound effects with absolute timing
+      final sfxJobs = <(String effectId, double startSec, double volume)>[];
+      for (int ci = 0; ci < clips.length; ci++) {
+        for (final sfx in clips[ci].effects.soundEffects) {
+          final absSec = clipOutputStarts[ci] + sfx.startMs / 1000.0;
+          sfxJobs.add((sfx.effectId, absSec, sfx.volume));
+        }
+      }
+
+      // Per-segment audio filters (voice changer, speed ramp)
+      final hasAudioEffects = clips.any((c) =>
+          c.effects.voiceEffect != VoiceEffect.none ||
+          c.effects.speedRamp != SpeedRamp.none);
+
+      String mainAudioLabel;
+
+      if (allSegments.length == 1) {
+        // Single segment
+        final af = _clipAudioFilters(clips[0]);
+        if (af.isNotEmpty) {
+          filterParts.add('[0:a]${af}[amain]');
+          mainAudioLabel = '[amain]';
+        } else {
+          mainAudioLabel = '[0:a]';
+        }
+      } else if (hasAudioEffects) {
+        // Multi-segment with audio effects: filter each, then concat
+        for (int i = 0; i < allSegments.length; i++) {
+          final clip = clips[allSegments[i].clipIndex];
+          final af = _clipAudioFilters(clip);
+          if (af.isNotEmpty) {
+            filterParts.add('[$i:a]${af}[a$i]');
+          } else {
+            filterParts.add('[$i:a]acopy[a$i]');
+          }
+        }
+        final aConcat = List.generate(allSegments.length, (i) => '[a$i]').join();
+        filterParts.add('${aConcat}concat=n=${allSegments.length}:v=0:a=1[amain]');
+        mainAudioLabel = '[amain]';
+      } else if (allSegments.length > 1) {
+        // Multi-segment, no audio effects: simple concat
+        final aConcat = List.generate(allSegments.length, (i) => '[$i:a]').join();
+        filterParts.add('${aConcat}concat=n=${allSegments.length}:v=0:a=1[amain]');
+        mainAudioLabel = '[amain]';
+      } else {
+        mainAudioLabel = '[0:a]';
+      }
+
+      // Mix in sound effects
+      if (sfxJobs.isNotEmpty) {
+        final sfxInputStart = allSegments.length + pipClipIndices.length +
+            overlayJobs.length; // after all other inputs
+        for (int si = 0; si < sfxJobs.length; si++) {
+          final (effectId, startSec, volume) = sfxJobs[si];
+          final sfxPath = sfxPaths[effectId];
+          if (sfxPath == null) continue;
+          inputs.write('-i "$sfxPath" ');
+          final delayMs = (startSec * 1000).round();
+          filterParts.add(
+            '[${sfxInputStart + si}:a]volume=$volume,adelay=$delayMs|$delayMs[sfx$si]',
+          );
+        }
+        final sfxLabels = List.generate(sfxJobs.length, (i) => '[sfx$i]').join();
+        filterParts.add(
+          '$mainAudioLabel${sfxLabels}amix=inputs=${sfxJobs.length + 1}:duration=longest[outa]',
+        );
+        audioMapping = '-map "[outa]" -c:a aac -b:a 128k -ac 2';
+      } else if (mainAudioLabel != '[0:a]') {
+        audioMapping = '-map "$mainAudioLabel" -c:a aac -b:a 128k -ac 2';
+      } else {
+        audioMapping = '-map 0:a? -c:a aac -b:a 128k -ac 2';
+      }
+    }
+
     final filterComplex = filterParts.join(';');
 
-    final audioArgs = settings.includeAudio
-        ? '-map 0:a? -c:a aac -b:a 128k -ac 2'
-        : '-an';
-
-    return '-y ${inputs}-filter_complex "$filterComplex" -map "$outputLabel" $audioArgs '
+    return '-y ${inputs}-filter_complex "$filterComplex" -map "$outputLabel" $audioMapping '
         '-c:v libx264 -preset fast -crf ${quality.crf} '
         '-movflags +faststart "$outputPath"';
   }
@@ -444,10 +550,101 @@ class ExportService {
   }
 }
 
+/// Extract a Flutter asset to a temp file so ffmpeg can read it.
+Future<String> _extractAssetToTemp(String assetPath) async {
+  final dir = await getTemporaryDirectory();
+  final fileName = assetPath.split('/').last;
+  final tempFile = File('${dir.path}/sfx_$fileName');
+  if (!await tempFile.exists()) {
+    final data = await rootBundle.load('assets/$assetPath');
+    await tempFile.writeAsBytes(data.buffer.asUint8List());
+  }
+  return tempFile.path;
+}
+
 /// Helper class for flattened segments during export
 class _ExportSegment {
   final String path;
   final ClipTrim segment;
   final int clipIndex;
   _ExportSegment(this.path, this.segment, this.clipIndex);
+}
+
+/// Builds per-clip video filter additions (chroma key, speed ramp, color filter).
+/// Returns filter string to append after scale/pad, or empty string.
+String _clipVideoFilters(Clip clip) {
+  final parts = <String>[];
+
+  // Chroma key (green screen)
+  if (clip.effects.chromaKey != null) {
+    parts.add(clip.effects.chromaKey!.ffmpegFilter);
+  }
+
+  // Color filter preset
+  if (clip.effects.filter != VideoFilter.none) {
+    parts.add(clip.effects.filter.ffmpegFilter);
+  }
+
+  // Speed ramp via setpts
+  if (clip.effects.speedRamp != SpeedRamp.none) {
+    parts.add(_speedRampSetpts(clip.effects.speedRamp));
+  }
+
+  return parts.isEmpty ? '' : ',${parts.join(",")}';
+}
+
+/// Builds per-clip audio filter (voice changer, speed ramp tempo adjustment).
+/// Returns filter string or empty string.
+String _clipAudioFilters(Clip clip) {
+  final parts = <String>[];
+
+  // Voice changer
+  if (clip.effects.voiceEffect != VoiceEffect.none) {
+    parts.add(clip.effects.voiceEffect.ffmpegFilter);
+  }
+
+  // Speed ramp audio tempo compensation
+  if (clip.effects.speedRamp != SpeedRamp.none) {
+    parts.add(_speedRampAtempo(clip.effects.speedRamp));
+  }
+
+  return parts.join(',');
+}
+
+/// Map SpeedRamp presets to ffmpeg setpts expressions.
+String _speedRampSetpts(SpeedRamp ramp) {
+  switch (ramp) {
+    case SpeedRamp.none:
+      return '';
+    case SpeedRamp.slowStart:
+      // Starts at 0.5x, ramps to 1x over the clip
+      return "setpts='if(lt(T,1),2*PTS,PTS+1)'";
+    case SpeedRamp.slowEnd:
+      // Normal speed, slows to 0.5x in last second
+      return "setpts='PTS+max(0,(T-DURATION+1))*PTS*0.5'";
+    case SpeedRamp.speedBurst:
+      // 0.5x → 2x → 0.5x (middle is fast)
+      return "setpts='if(lt(T,DURATION*0.3),2*PTS,if(lt(T,DURATION*0.7),0.5*PTS,2*PTS))'";
+    case SpeedRamp.dramaticSlowmo:
+      // 1x → 0.25x → 1x (middle is ultra-slow)
+      return "setpts='if(lt(T,DURATION*0.3),PTS,if(lt(T,DURATION*0.7),4*PTS,PTS))'";
+  }
+}
+
+/// Corresponding atempo adjustments for speed ramp presets.
+/// Since setpts only affects video, audio needs atempo to match.
+String _speedRampAtempo(SpeedRamp ramp) {
+  // Approximate with overall tempo — exact variable tempo needs rubberband
+  switch (ramp) {
+    case SpeedRamp.none:
+      return '';
+    case SpeedRamp.slowStart:
+      return 'atempo=0.85'; // average slowdown
+    case SpeedRamp.slowEnd:
+      return 'atempo=0.85';
+    case SpeedRamp.speedBurst:
+      return 'atempo=1.2'; // average speedup
+    case SpeedRamp.dramaticSlowmo:
+      return 'atempo=0.6'; // significant average slowdown
+  }
 }
